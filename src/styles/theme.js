@@ -1,0 +1,33 @@
+export const theme = {
+  bg: '#111111',
+  panelBg: '#1a1a1a',
+  panelBorder: '#2a2a2a',
+  surface: '#222222',
+  surfaceRaised: '#2c2c2c',
+  text: '#c8c8c8',
+  textDim: '#666666',
+  textBright: '#ffffff',
+  accent: '#686abb',
+  accentDim: '#4f50a0',
+  accentBright: '#8b8dd4',
+  green: '#4ade80',
+  blue: '#60a5fa',
+  yellow: '#facc15',
+  red: '#f87171',
+  purple: '#a78bfa',
+  stepColors: ['#4ade80', '#60a5fa', '#facc15', '#f87171', '#a78bfa', '#fb923c', '#2dd4bf', '#e879f9'],
+  transportBg: '#0a0a0a',
+  mixerStrip: '#1e1e1e',
+  keyWhite: '#e0e0e0',
+  keyBlack: '#333333',
+  gridLine: '#2a2a2a',
+  gridBeat: '#333333',
+  selected: '#686abb44',
+}
+
+export const fontSize = {
+  xs: '10px',
+  sm: '11px',
+  md: '12px',
+  lg: '14px',
+}

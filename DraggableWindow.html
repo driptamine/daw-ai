@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>DAW - Draggable Windows</title>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body,#root{height:100%;overflow:hidden}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#1a1a2e;color:#e0e0e0}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { createElement: h, useState, useEffect, useRef, useCallback } = React
+const { createRoot } = ReactDOM
+
+// ─── Theme ────────────────────────────────────────────────
+const theme = {
+  bg: '#1a1a2e',
+  surface: '#16213e',
+  surfaceAlt: '#1a1a3e',
+  panelBg: '#0f3460',
+  panelBorder: '#2a2a4a',
+  text: '#e0e0e0',
+  textDim: '#888',
+  accent: '#e94560',
+  accent2: '#0f3460',
+  gridLine: '#2a2a4a',
+  playhead: '#e94560',
+}
+
+// ─── Store ────────────────────────────────────────────────
+let store = {
+  isPlaying: false, bpm: 130, swing: 0, currentPattern: 1, patternMode: true, metronome: false,
+  patterns: [{id:1,name:'Pattern 1',channels:[]},{id:2,name:'Pattern 2',channels:[]},{id:3,name:'Pattern 3',channels:[]}],
+  channels: [
+    {id:1,name:'Kick',steps:Array(16).fill(0),color:'#4ade80',vol:100,pan:64,mute:false},
+    {id:2,name:'Snare',steps:Array(16).fill(0),color:'#60a5fa',vol:90,pan:64,mute:false},
+    {id:3,name:'HiHat Closed',steps:Array(16).fill(0),color:'#facc15',vol:85,pan:64,mute:false},
+    {id:4,name:'HiHat Open',steps:Array(16).fill(0),color:'#f87171',vol:80,pan:64,mute:false},
+    {id:5,name:'Clap',steps:Array(16).fill(0),color:'#a78bfa',vol:85,pan:64,mute:false},
+    {id:6,name:'Bass',steps:Array(16).fill(0),color:'#fb923c',vol:95,pan:64,mute:false},
+    {id:7,name:'Synth',steps:Array(16).fill(0),color:'#2dd4bf',vol:75,pan:64,mute:false},
+    {id:8,name:'FX',steps:Array(16).fill(0),color:'#e879f9',vol:70,pan:64,mute:false},
+  ],
+  mixerChannels: [
+    {id:1,name:'Kick',vol:80,pan:64,mute:false,solo:false,color:'#4ade80'},
+    {id:2,name:'Snare',vol:75,pan:64,mute:false,solo:false,color:'#60a5fa'},
+    {id:3,name:'HiHat',vol:70,pan:64,mute:false,solo:false,color:'#facc15'},
+    {id:4,name:'Perc',vol:70,pan:64,mute:false,solo:false,color:'#f87171'},
+    {id:5,name:'Bass',vol:85,pan:64,mute:false,solo:false,color:'#fb923c'},
+    {id:6,name:'Synth',vol:65,pan:64,mute:false,solo:false,color:'#2dd4bf'},
+    {id:7,name:'FX',vol:60,pan:64,mute:false,solo:false,color:'#e879f9'},
+  ],
+  maxZIndex: 10,
+  windowLayout: {
+    channelRack:{x:6,y:6,width:380,height:340,zIndex:4},
+    pianoRoll:{x:392,y:6,width:600,height:340,zIndex:3},
+    playlist:{x:6,y:352,width:986,height:320,zIndex:2},
+    mixer:{x:6,y:678,width:986,height:180,zIndex:1},
+  },
+  playlistClips:[
+    {id:1,track:0,startBar:0,lengthBars:4,patternId:1},
+    {id:2,track:1,startBar:0,lengthBars:4,patternId:2},
+    {id:3,track:2,startBar:4,lengthBars:2,patternId:3},
+    {id:4,track:0,startBar:8,lengthBars:4,patternId:1},
+  ],
+  playlistLength: 64,
+  listeners: new Set(),
+  currentStep: -1, playheadRow: -1,
+}
+const listeners = new Set()
+function getState() { return store }
+function setState(partial) {
+  if (typeof partial === 'function') store = {...store, ...partial(store)}
+  else store = {...store, ...partial}
+  listeners.forEach(fn => fn(store))
+}
+
+// ─── DraggableWindow ──────────────────────────────────────
+function DraggableWindow({ id, title, children }) {
+  const elRef = useRef(null)
+  const posRef = useRef(null)
+  const win = store.windowLayout[id]
+  if (!win) return h('div', { ref: elRef }, children)
+
+  useEffect(() => {
+    const el = elRef.current
+    if (!el) return
+    el.style.position = 'absolute'
+    el.style.left = '0px'
+    el.style.top = '0px'
+    el.style.width = win.width + 'px'
+    el.style.height = win.height + 'px'
+    el.style.transform = `translate(${win.x}px, ${win.y}px)`
+    el.style.zIndex = win.zIndex
+    el.style.cursor = 'grab'
+    el.style.outline = '1px solid ' + theme.panelBorder
+    el.style.background = theme.surface
+    el.style.display = 'flex'
+    el.style.flexDirection = 'column'
+    el.style.borderRadius = '6px'
+    el.style.overflow = 'hidden'
+    posRef.current = { x: win.x, y: win.y }
+  }, [])
+
+  const headerStyle = {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '4px 10px',
+    background: theme.surfaceAlt,
+    borderBottom: '1px solid ' + theme.panelBorder,
+    flexShrink: 0,
+    userSelect: 'none',
+    fontSize: '12px',
+    fontWeight: 600,
+    color: theme.text,
+  }
+
+  return h('div', { ref: elRef },
+    h('div', {
+      style: headerStyle,
+      onMouseDown: (e) => {
+        e.preventDefault()
+        const el = elRef.current
+        if (!el) return
+        const s = getState()
+        const w = s.windowLayout[id]
+        if (!w) return
+
+        const newZ = (s.maxZIndex || 10) + 1
+        el.style.zIndex = newZ
+        const layouts = {...s.windowLayout}
+        layouts[id] = {...w, zIndex: newZ}
+        setState({ windowLayout: layouts, maxZIndex: newZ })
+
+        const parent = el.parentElement
+        const pw = parent?.clientWidth ?? 1200
+        const ph = parent?.clientHeight ?? 800
+        const startX = e.clientX, startY = e.clientY
+        const p = posRef.current
+        const startL = p ? p.x : w.x
+        const startT = p ? p.y : w.y
+        const cw = w.width, ch = w.height
+
+        document.body.style.cursor = 'grabbing'
+        el.style.cursor = 'grabbing'
+
+        const onMove = (me) => {
+          const dx = me.clientX - startX, dy = me.clientY - startY
+          const nx = Math.max(0, Math.min(pw - cw, startL + dx))
+          const ny = Math.max(0, Math.min(ph - ch, startT + dy))
+          posRef.current = { x: nx, y: ny }
+          el.style.transform = `translate(${nx}px, ${ny}px)`
+        }
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove)
+          document.removeEventListener('mouseup', onUp)
+          document.body.style.cursor = ''
+          el.style.cursor = 'grab'
+          const p2 = posRef.current
+          if (!p2) return
+          const s2 = getState()
+          const w2 = s2.windowLayout[id]
+          if (!w2) return
+          const layouts2 = {...s2.windowLayout}
+          layouts2[id] = {...w2, x: p2.x, y: p2.y}
+          setState({ windowLayout: layouts2 })
+        }
+        document.addEventListener('mousemove', onMove)
+        document.addEventListener('mouseup', onUp)
+      }
+    }, title),
+
+    h('div', {
+      style: {
+        flex: 1,
+        minHeight: 0,
+        overflow: 'hidden',
+        display: 'flex',
+        flexDirection: 'column',
+      }
+    }, children),
+
+    h('div', {
+      style: {
+        position: 'absolute',
+        right: 0, bottom: 0,
+        width: '14px', height: '14px',
+        cursor: 'nwse-resize',
+        zIndex: 10,
+      },
+      onMouseDown: (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const el = elRef.current
+        if (!el) return
+        const s = getState()
+        const w = s.windowLayout[id]
+        if (!w) return
+
+        const parent = el.parentElement
+        const pw = parent?.clientWidth ?? 1200
+        const ph = parent?.clientHeight ?? 800
+        const startX = e.clientX, startY = e.clientY
+        const startW = w.width, startH = w.height
+
+        const onMove = (me) => {
+          const dx = me.clientX - startX, dy = me.clientY - startY
+          const nw = Math.max(120, Math.min(pw - w.x, startW + dx))
+          const nh = Math.max(80, Math.min(ph - w.y, startH + dy))
+          el.style.width = nw + 'px'
+          el.style.height = nh + 'px'
+        }
+        const onUp = () => {
+          document.removeEventListener('mousemove', onMove)
+          document.removeEventListener('mouseup', onUp)
+          const s2 = getState()
+          const w2 = s2.windowLayout[id]
+          if (!w2) return
+          const layouts2 = {...s2.windowLayout}
+          layouts2[id] = {
+            ...w2,
+            width: parseFloat(el.style.width),
+            height: parseFloat(el.style.height),
+          }
+          setState({ windowLayout: layouts2 })
+        }
+        document.addEventListener('mousemove', onMove)
+        document.addEventListener('mouseup', onUp)
+      }
+    },
+      h('div', {
+        style: {
+          position: 'absolute',
+          right: '3px', bottom: '3px',
+          width: '6px', height: '6px',
+          borderRight: '2px solid ' + theme.textDim,
+          borderBottom: '2px solid ' + theme.textDim,
+        }
+      })
+    )
+  )
+}
+
+// ─── Panel placeholders ───────────────────────────────────
+function ChannelRack() {
+  return h('div', {
+    style: {
+      padding: '8px', fontSize: '11px', color: theme.textDim,
+      fontFamily: 'monospace', lineHeight: '1.6',
+    }
+  },
+    'Kick    ████░░░░░░░░░░░░\nSnare   ░░░░████░░░░░░░░\nHiHat C ████░░████░░████\nHiHat O ░░░░░░░░░░████░░\nClap    ░░░░░░░░░░░░░░██\nBass    ██░░░░████░░░░░░\nSynth   ░░████░░░░████░░\nFX      ░░░░░░░░░░░░░░░░'
+      .split('\n').map((l, i) =>
+        h('div', {
+          key: i,
+          style: {
+            color: ['#4ade80','#60a5fa','#facc15','#f87171','#a78bfa','#fb923c','#2dd4bf','#e879f9'][i],
+            whiteSpace: 'pre',
+          }
+        }, l)
+      )
+  )
+}
+
+function PianoRoll() {
+  return h('div', {
+    style: {
+      padding: '8px', fontSize: '10px', color: theme.textDim,
+      fontFamily: 'monospace', lineHeight: '1.4',
+      display: 'grid',
+      gridTemplateColumns: '50px repeat(16, 1fr)',
+      gap: '1px',
+    }
+  },
+    ...[/* notes */'C5 ','B4 ','A#4','A4 ','G#4','G4 ','F#4','F4 ','E4 ','D#4','D4 ','C#4','C4 '].flatMap((n, i) =>
+      ['label', ...Array(16).fill(0)].map((_, j) =>
+        h('div', {
+          key: i * 17 + j,
+          style: {
+            background: j === 0 ? 'transparent' : (Math.random() > 0.85 ? theme.accent : theme.panelBg),
+            color: j === 0 ? theme.textDim : undefined,
+            height: '10px',
+            borderRadius: '1px',
+          }
+        }, j === 0 ? n : '')
+      )
+    )
+  )
+}
+
+function Playlist() {
+  return h('div', {
+    style: {
+      padding: '8px', fontSize: '10px', color: theme.textDim,
+      fontFamily: 'monospace',
+      display: 'flex',
+      flexDirection: 'column',
+      gap: '2px',
+    }
+  },
+    h('div', { style: { display: 'flex', gap: '4px', marginBottom: '4px' } },
+      h('span', { style: { color: theme.accent, fontWeight: 600, fontSize: '11px' } }, 'SONG'),
+      h('span', { style: { color: theme.textDim } }, '|'),
+      h('span', { style: { color: theme.textDim } }, 'Pattern 1'),
+    ),
+    ...[1,2,3,4,5,6,7,8].map(t =>
+      h('div', {
+        key: t,
+        style: {
+          height: '20px',
+          background: theme.panelBg,
+          borderRadius: '2px',
+          display: 'flex',
+          alignItems: 'center',
+          padding: '0 6px',
+          gap: '6px',
+        }
+      },
+        h('span', { style: { color: theme.textDim, width: '30px', flexShrink: 0 } }, t),
+        t === 1 ? h('div', {
+          style: {
+            background: theme.accent,
+            height: '14px',
+            width: '80px',
+            borderRadius: '2px',
+            opacity: 0.8,
+          }
+        }) : t === 2 ? h('div', {
+          style: {
+            background: '#60a5fa',
+            height: '14px',
+            width: '80px',
+            borderRadius: '2px',
+            opacity: 0.8,
+          }
+        }) : h('div', { style: { color: theme.textDim, fontSize: '9px' } }, '—')
+      )
+    )
+  )
+}
+
+function Mixer() {
+  return h('div', {
+    style: {
+      padding: '8px', fontSize: '10px', color: theme.textDim,
+      display: 'flex',
+      gap: '4px',
+      flex: 1,
+      minHeight: 0,
+    }
+  },
+    ...[1,2,3,4,5,6,7].map(ch => {
+      const colors = ['#4ade80','#60a5fa','#facc15','#f87171','#fb923c','#2dd4bf','#e879f9']
+      return h('div', {
+        key: ch,
+        style: {
+          flex: 1,
+          background: theme.panelBg,
+          borderRadius: '3px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'flex-end',
+          padding: '4px',
+          gap: '2px',
+        }
+      },
+        h('div', {
+          style: {
+            width: '6px',
+            height: '60px',
+            background: theme.surfaceAlt,
+            borderRadius: '3px',
+            position: 'relative',
+          }
+        },
+          h('div', {
+            style: {
+              position: 'absolute',
+              bottom: '0',
+              width: '100%',
+              height: (40 + ch * 5) + '%',
+              background: colors[ch-1],
+              borderRadius: '3px',
+              transition: 'height 0.1s',
+            }
+          })
+        ),
+        h('span', { style: { color: theme.textDim, fontSize: '8px', marginTop: '4px' } },
+          ['Kick','Snare','HiHat','Perc','Bass','Synth','FX'][ch-1]
+        )
+      )
+    })
+  )
+}
+
+// ─── Transport ────────────────────────────────────────────
+function TransportPanel() {
+  const [, force] = useState(0)
+  useEffect(() => {
+    listeners.add(force)
+    return () => listeners.delete(force)
+  }, [])
+  const s = getState()
+  return h('div', {
+    style: {
+      display: 'flex', alignItems: 'center', gap: '12px',
+      padding: '8px 16px', background: theme.surface,
+      borderBottom: '1px solid ' + theme.panelBorder,
+      fontSize: '12px',
+    }
+  },
+    h('span', {
+      style: { color: theme.accent, fontWeight: 700, fontSize: '14px', cursor: 'pointer' },
+      onClick: () => setState({ isPlaying: !s.isPlaying })
+    }, s.isPlaying ? '■' : '▶'),
+    h('span', { style: { color: theme.text } }, `${s.bpm} BPM`),
+    h('span', {
+      style: {
+        color: s.patternMode ? theme.accent : theme.textDim,
+        cursor: 'pointer', fontWeight: s.patternMode ? 700 : 400,
+      },
+      onClick: () => setState({ patternMode: true })
+    }, 'PAT'),
+    h('span', {
+      style: {
+        color: !s.patternMode ? theme.accent : theme.textDim,
+        cursor: 'pointer', fontWeight: !s.patternMode ? 700 : 400,
+      },
+      onClick: () => setState({ patternMode: false })
+    }, 'SONG'),
+    h('span', { style: { color: theme.text } }, `Pattern ${s.currentPattern}`),
+    h('span', {
+      style: { color: theme.textDim, cursor: 'pointer', marginLeft: 'auto' },
+    }, 'SNZ'),
+  )
+}
+
+// ─── App ──────────────────────────────────────────────────
+function App() {
+  const [, force] = useState(0)
+  useEffect(() => {
+    listeners.add(force)
+    return () => listeners.delete(force)
+  }, [])
+
+  return h('div', {
+    style: {
+      display: 'flex',
+      flexDirection: 'column',
+      height: '100vh',
+      background: theme.bg,
+    }
+  },
+    h(TransportPanel),
+    h('div', {
+      style: {
+        display: 'flex',
+        flex: 1,
+        minHeight: 0,
+      }
+    },
+      h('div', {
+        style: {
+          width: '48px',
+          background: theme.surface,
+          borderRight: '1px solid ' + theme.panelBorder,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          padding: '8px 0',
+          gap: '12px',
+          fontSize: '10px',
+          color: theme.textDim,
+        }
+      },
+        ['♫','♬','🎹','🔊','📁'].map((icon, i) =>
+          h('div', {
+            key: i,
+            style: {
+              cursor: 'pointer',
+              padding: '6px',
+              borderRadius: '4px',
+              fontSize: '16px',
+              background: i === 0 ? theme.panelBg : 'transparent',
+            }
+          }, icon)
+        )
+      ),
+      h('div', {
+        style: {
+          position: 'relative',
+          flex: 1,
+          minWidth: 0,
+          overflow: 'hidden',
+        }
+      },
+        h(DraggableWindow, { id: 'channelRack', title: 'Channel Rack' }, h(ChannelRack)),
+        h(DraggableWindow, { id: 'pianoRoll', title: 'Piano Roll' }, h(PianoRoll)),
+        h(DraggableWindow, { id: 'playlist', title: 'Playlist' }, h(Playlist)),
+        h(DraggableWindow, { id: 'mixer', title: 'Mixer' }, h(Mixer)),
+      )
+    )
+  )
+}
+
+const root = createRoot(document.getElementById('root'))
+root.render(h(App))
+</script>
+</body>
+</html>
