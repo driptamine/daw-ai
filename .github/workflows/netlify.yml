@@ -10,6 +10,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Lint, typecheck & build
@@ -67,8 +70,45 @@ jobs:
       # Requires repository secrets:
       #   NETLIFY_AUTH_TOKEN - personal access token from Netlify
       #   NETLIFY_SITE_ID    - site ID from Netlify (Site settings -> General)
+      - name: Validate Netlify credentials
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${NETLIFY_AUTH_TOKEN:-}" ]; then
+            echo "::error::Secret NETLIFY_AUTH_TOKEN is not set. Add it in Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+          if [ -z "${NETLIFY_SITE_ID:-}" ]; then
+            echo "::error::Secret NETLIFY_SITE_ID is not set. Add it in Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+          user_status=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $NETLIFY_AUTH_TOKEN" \
+            https://api.netlify.com/api/v1/user)
+
+          if [ "$user_status" != "200" ]; then
+            echo "::error::Netlify token is invalid or expired (HTTP $user_status). Create a new personal access token in Netlify: User settings -> Applications -> Personal access tokens."
+            exit 1
+          fi
+
+          site_status=$(curl -s -o /dev/null -w '%{http_code}' \
+            -H "Authorization: Bearer $NETLIFY_AUTH_TOKEN" \
+            "https://api.netlify.com/api/v1/sites/$NETLIFY_SITE_ID")
+
+          if [ "$site_status" != "200" ]; then
+            echo "::error::Netlify site is not accessible with this token (HTTP $site_status). Check NETLIFY_SITE_ID: Site configuration -> General -> Site ID."
+            exit 1
+          fi
+
+          echo "Netlify credentials are valid."
+
       - name: Deploy production build
-        run: npx --yes netlify-cli@latest deploy --prod --dir=dist --site "$NETLIFY_SITE_ID"
+        run: npx --yes netlify-cli@latest deploy --prod --dir=dist --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN"
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
