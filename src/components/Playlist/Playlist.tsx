@@ -270,6 +270,33 @@ const AddTrackBtn = styled.button`
   }
 `
 
+const CopiedLengthBadge = styled.div`
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 1px 6px;
+  border: 1px solid ${theme.accent};
+  border-radius: 3px;
+  color: ${theme.accent};
+  font-size: ${fontSize.xs};
+  white-space: nowrap;
+`
+
+const CopiedLengthReset = styled.button`
+  background: transparent;
+  border: none;
+  color: ${theme.accent};
+  cursor: pointer;
+  padding: 0 2px;
+  font-size: ${fontSize.sm};
+  line-height: 1;
+
+  &:hover {
+    color: ${theme.text};
+  }
+`
+
 const ModeBtn = styled.button<{ $active: boolean }>`
   background: ${({ $active }) => ($active ? theme.accent : 'transparent')};
   color: ${({ $active }) => ($active ? '#fff' : theme.textDim)};
@@ -349,6 +376,7 @@ export default function Playlist() {
   const dragDepthRef = useRef(0)
   const [isDragOver, setIsDragOver] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
+  const [copiedLength, setCopiedLength] = useState<number | null>(null)
 
   useEffect(() => {
     return subscribe(() => forceUpdate((n) => n + 1))
@@ -368,17 +396,19 @@ export default function Playlist() {
     )
     if (existingClip) return
 
+    const lengthBars = copiedLength ?? 2
     const newClip = {
       id: Date.now(),
       track: trackIdx,
       startBar: bar,
-      lengthBars: 2,
+      lengthBars,
       patternId: s.currentPattern,
     }
     s.setState({
       playlistClips: [...s.playlistClips, newClip],
+      playlistLength: Math.max(s.playlistLength || 64, bar + lengthBars),
     })
-  }, [getState])
+  }, [getState, copiedLength])
 
   const handleRemoveClip = useCallback((clipId: number) => {
     const s = getState()
@@ -531,9 +561,12 @@ export default function Playlist() {
     const onUp = () => {
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
-      if (!moved && clip.patternId != null) {
-        const cur = getState()
-        cur.setState({ currentPattern: clip.patternId, playStart: clip.startBar * 16 })
+      if (!moved) {
+        setCopiedLength(clip.lengthBars)
+        if (clip.patternId != null) {
+          const cur = getState()
+          cur.setState({ currentPattern: clip.patternId, playStart: clip.startBar * 16 })
+        }
       }
     }
 
@@ -670,6 +703,17 @@ export default function Playlist() {
           Pattern
         </ModeBtn>
         <AddTrackBtn onClick={handleAddTrack}>+ Track</AddTrackBtn>
+        {copiedLength != null && (
+          <CopiedLengthBadge title="Длина скопированного клипа. ЛКМ по пустой ячейке создаст клип такой длины.">
+            <span>Длина клипа: {copiedLength} бар.</span>
+            <CopiedLengthReset
+              title="Сбросить длину (2 бара)"
+              onClick={() => setCopiedLength(null)}
+            >
+              ×
+            </CopiedLengthReset>
+          </CopiedLengthBadge>
+        )}
       </div>
 
       <GridArea>
@@ -757,7 +801,7 @@ export default function Playlist() {
                         key={clip.id}
                         style={getClipStyle(clip)}
                         $color={getClipColor(clip)}
-                        title="Перетащи, чтобы переместить. Двойной клик — удалить."
+                        title="ЛКМ — скопировать длину и перейти к клипу. Перетащи, чтобы переместить. ПКМ — удалить."
                         onMouseDown={(e) => handleClipMouseDown(clip, e)}
                         onContextMenu={(e) => {
                           e.preventDefault()
