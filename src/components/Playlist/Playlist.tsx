@@ -182,7 +182,6 @@ const ClipBlock = styled.div<{ $color: string }>`
   border-radius: 4px;
   background: ${({ $color }) => $color}33;
   border: 1px solid ${({ $color }) => $color};
-  border-left: 3px solid ${({ $color }) => $color};
   cursor: grab;
   display: flex;
   flex-direction: column;
