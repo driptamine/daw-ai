@@ -46,9 +46,9 @@ const defaultStore: AppState = {
   returnTracks: defaultReturnTracks,
   maxZIndex: 10,
   windowLayout: {
-    channelRack: { x: 6, y: 6, width: 380, height: 300, zIndex: 4 },
-    pianoRoll: { x: 392, y: 6, width: 600, height: 300, zIndex: 3 },
-    playlist: { x: 6, y: 312, width: 986, height: 236, zIndex: 2 },
+    playlist: { x: 6, y: 6, width: 986, height: 270, zIndex: 4 },
+    channelRack: { x: 6, y: 282, width: 380, height: 266, zIndex: 3 },
+    pianoRoll: { x: 392, y: 282, width: 600, height: 266, zIndex: 2 },
     mixer: { x: 6, y: 554, width: 986, height: 262, zIndex: 1 },
   },
   playlistClips: [
