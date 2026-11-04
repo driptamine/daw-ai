@@ -66,6 +66,7 @@ const defaultStore: AppState = {
     playlist: true,
     mixer: true,
   },
+  audioClips: [],
   currentStep: -1,
   playheadRow: -1,
 }
@@ -122,6 +123,7 @@ let store: StoreState = {
   currentPattern: normalizedCurrent,
   channels: normalizeChannels(persisted ? persisted.channels : null),
   playlistClips: normalizeClips(persisted && persisted.playlistClips, normalizedPatterns),
+  audioClips: [],
   listeners: new Set(),
   currentStep: -1,
   playheadRow: -1,

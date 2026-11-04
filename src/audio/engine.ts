@@ -3,6 +3,7 @@ import { SOUND_PRESETS, midiToFreq } from './presets'
 let ctx: AudioContext | null = null
 let master: GainNode | null = null
 let masterVolume = 0.85
+const activeSources = new Set<AudioBufferSourceNode>()
 
 export const audioStats = {
   jitter: 0,
@@ -37,6 +38,45 @@ export function resumeAudio(): AudioContext {
 export function setMasterVolume(value: number): void {
   masterVolume = Math.max(0, Math.min(1, value))
   if (master) master.gain.value = masterVolume
+}
+
+export async function decodeAudioFile(file: File): Promise<AudioBuffer> {
+  const context = getContext()
+  if (context.state === 'suspended') void context.resume()
+  const data = await file.arrayBuffer()
+  return context.decodeAudioData(data)
+}
+
+export function playAudioBuffer(
+  buffer: AudioBuffer,
+  when: number,
+  offset = 0,
+  gainValue = 0.9,
+): void {
+  const context = getContext()
+  const source = context.createBufferSource()
+  const gain = context.createGain()
+  const safeOffset = Math.max(0, Math.min(offset, buffer.duration - 0.001))
+
+  source.buffer = buffer
+  gain.gain.value = Math.max(0, Math.min(1, gainValue))
+  source.connect(gain).connect(master as GainNode)
+  source.onended = () => {
+    activeSources.delete(source)
+  }
+  activeSources.add(source)
+  source.start(Math.max(when, context.currentTime), safeOffset)
+}
+
+export function stopAllAudio(): void {
+  activeSources.forEach((source) => {
+    try {
+      source.stop()
+    } catch {
+      // Source may have already stopped.
+    }
+  })
+  activeSources.clear()
 }
 
 export function playNote(

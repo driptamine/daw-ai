@@ -33,6 +33,16 @@ export interface Clip {
   patternId: number
 }
 
+export interface AudioClip {
+  id: number
+  name: string
+  assetId: string
+  startBar: number
+  lengthBars: number
+  duration: number
+  color: string
+}
+
 export interface WindowLayout {
   x: number
   y: number
@@ -59,6 +69,7 @@ export interface AppState {
   playlistClips: Clip[]
   playlistLength: number
   windowVisibility: Record<string, boolean>
+  audioClips: AudioClip[]
   currentStep: number
   playheadRow: number
 }

@@ -2,15 +2,30 @@ import { styled } from '@linaria/react'
 import { theme, fontSize } from '../../styles/theme'
 import { useStore } from '../../store/useStore'
 import { useEffect, useState, useCallback, useRef } from 'react'
-import type { MouseEvent as ReactMouseEvent, UIEvent as ReactUIEvent } from 'react'
-import type { Clip } from '../../store/types'
+import type { DragEvent as ReactDragEvent, MouseEvent as ReactMouseEvent, UIEvent as ReactUIEvent } from 'react'
+import type { AudioClip, Clip } from '../../store/types'
+import { decodeAudioFile } from '../../audio/engine'
+import { computePeaks, getAudioAsset, registerAudioAsset, removeAudioAsset } from '../../audio/assets'
 
 const BAR_WIDTH = 64
 const ROW_HEIGHT = 40
 const LABEL_WIDTH = 88
 const HEADER_HEIGHT = 28
+const AUDIO_CLIP_COLOR = '#2dd4bf'
+const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac']
+
+function isAudioFile(file: File): boolean {
+  if (file.type.startsWith('audio/')) return true
+  const name = file.name.toLowerCase()
+  return AUDIO_EXTENSIONS.some((ext) => name.endsWith(ext))
+}
+
+function hasFileDrag(e: ReactDragEvent<HTMLElement>): boolean {
+  return Array.from(e.dataTransfer.types).includes('Files')
+}
 
 const Container = styled.div`
+  position: relative;
   background: ${theme.panelBg};
   display: flex;
   flex-direction: column;
@@ -272,19 +287,76 @@ const ModeBtn = styled.button<{ $active: boolean }>`
   }
 `
 
+const AudioTrackLabel = styled.div`
+  height: ${ROW_HEIGHT}px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  font-size: ${fontSize.xs};
+  color: ${theme.text};
+  border-bottom: 1px solid ${theme.panelBorder};
+  background: ${theme.panelBg};
+  white-space: nowrap;
+`
+
+const AudioHint = styled.div`
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: ${fontSize.xs};
+  color: ${theme.textDim};
+  pointer-events: none;
+`
+
+const Waveform = styled.div`
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  padding: 1px 3px;
+  opacity: 0.85;
+`
+
+const WaveBar = styled.div`
+  flex: 1;
+  min-width: 1px;
+  background: ${theme.textBright};
+  border-radius: 1px;
+`
+
+const DropOverlay = styled.div`
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(104, 106, 187, 0.18);
+  border: 2px dashed ${theme.accent};
+  color: ${theme.textBright};
+  font-size: ${fontSize.md};
+  pointer-events: none;
+`
+
 export default function Playlist() {
   const { getState, subscribe } = useStore()
   const [, forceUpdate] = useState(0)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const timelineRef = useRef<HTMLDivElement | null>(null)
   const labelsInnerRef = useRef<HTMLDivElement | null>(null)
+  const dragDepthRef = useRef(0)
+  const [isDragOver, setIsDragOver] = useState(false)
+  const [isImporting, setIsImporting] = useState(false)
 
   useEffect(() => {
     return subscribe(() => forceUpdate((n) => n + 1))
   }, [subscribe])
 
   const state = getState()
-  const { channels, patterns, playlistClips, playlistLength, currentStep, patternMode, isPlaying, playStart } = state
+  const { channels, patterns, playlistClips, playlistLength, currentStep, patternMode, isPlaying, playStart, audioClips } = state
 
   const totalBars = playlistLength || 64
   const barWidth = BAR_WIDTH
@@ -313,6 +385,96 @@ export default function Playlist() {
     const s = getState()
     s.setState({
       playlistClips: s.playlistClips.filter((c) => c.id !== clipId),
+    })
+  }, [getState])
+
+  const handleRemoveAudioClip = useCallback((clipId: number) => {
+    const s = getState()
+    const removed = s.audioClips.find((clip) => clip.id === clipId)
+    const next = s.audioClips.filter((clip) => clip.id !== clipId)
+    s.setState({ audioClips: next })
+    if (removed && !next.some((clip) => clip.assetId === removed.assetId)) {
+      removeAudioAsset(removed.assetId)
+    }
+  }, [getState])
+
+  const handleDragEnter = useCallback((e: ReactDragEvent<HTMLDivElement>) => {
+    if (!hasFileDrag(e)) return
+    e.preventDefault()
+    dragDepthRef.current += 1
+    setIsDragOver(true)
+  }, [])
+
+  const handleDragOver = useCallback((e: ReactDragEvent<HTMLDivElement>) => {
+    if (!hasFileDrag(e)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'copy'
+  }, [])
+
+  const handleDragLeave = useCallback(() => {
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) setIsDragOver(false)
+  }, [])
+
+  const handleDrop = useCallback(async (e: ReactDragEvent<HTMLDivElement>) => {
+    if (!hasFileDrag(e)) return
+    e.preventDefault()
+    dragDepthRef.current = 0
+    setIsDragOver(false)
+
+    const files = Array.from(e.dataTransfer.files).filter(isAudioFile)
+    if (!files.length) return
+
+    const snapshot = getState()
+    const rect = timelineRef.current?.getBoundingClientRect()
+    const totalBars = snapshot.playlistLength || 64
+    const dropBar = rect
+      ? Math.max(0, Math.min(totalBars - 1, Math.floor((e.clientX - rect.left) / BAR_WIDTH)))
+      : 0
+    const secondsPerBar = (60 / snapshot.bpm) * 4
+
+    setIsImporting(true)
+    const newClips: AudioClip[] = []
+    let cursor = dropBar
+
+    for (let i = 0; i < files.length; i += 1) {
+      const file = files[i]
+      try {
+        const buffer = await decodeAudioFile(file)
+        const assetId = `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`
+        const name = file.name.replace(/\.[^.]+$/, '')
+        registerAudioAsset({
+          id: assetId,
+          name,
+          buffer,
+          duration: buffer.duration,
+          peaks: computePeaks(buffer),
+        })
+        const lengthBars = Math.max(0.25, buffer.duration / secondsPerBar)
+        newClips.push({
+          id: Date.now() + i,
+          name,
+          assetId,
+          startBar: cursor,
+          lengthBars,
+          duration: buffer.duration,
+          color: AUDIO_CLIP_COLOR,
+        })
+        cursor = Math.ceil(cursor + lengthBars)
+      } catch (error) {
+        console.error(`Не удалось декодировать ${file.name}`, error)
+      }
+    }
+
+    setIsImporting(false)
+
+    if (!newClips.length) return
+
+    const latest = getState()
+    const endBar = Math.max(...newClips.map((clip) => clip.startBar + clip.lengthBars))
+    latest.setState({
+      audioClips: [...latest.audioClips, ...newClips],
+      playlistLength: Math.max(latest.playlistLength, Math.ceil(endBar)),
     })
   }, [getState])
 
@@ -463,7 +625,7 @@ export default function Playlist() {
     document.addEventListener('mouseup', onUp)
   }, [seekFromClientX])
 
-  const getClipStyle = (clip: Clip) => ({
+  const getClipStyle = (clip: Pick<Clip, 'startBar' | 'lengthBars'>) => ({
     left: clip.startBar * barWidth,
     width: clip.lengthBars * barWidth,
   })
@@ -486,7 +648,12 @@ export default function Playlist() {
   const playheadBar = displayStep / 16
 
   return (
-    <Container>
+    <Container
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '2px 8px', background: theme.surface, borderBottom: `1px solid ${theme.panelBorder}`, flexShrink: 0 }}>
         <ModeBtn
           $active={!patternMode}
@@ -527,6 +694,10 @@ export default function Playlist() {
                   </TrackToggleBtn>
                 </TrackLabel>
               ))}
+              <AudioTrackLabel>
+                <TrackName>Audio</TrackName>
+                <span style={{ color: theme.textDim }}>MP3</span>
+              </AudioTrackLabel>
             </div>
           </LabelsViewport>
         </TrackLabels>
@@ -650,6 +821,45 @@ export default function Playlist() {
                 </TrackRow>
               ))}
 
+              <TrackRow $muted={false}>
+                {Array.from({ length: totalBars }, (_, bar) => (
+                  <BarCell key={bar} />
+                ))}
+
+                {audioClips.length === 0 && (
+                  <AudioHint>Перетащите MP3, WAV или OGG в плейлист</AudioHint>
+                )}
+
+                {audioClips.map((clip) => {
+                  const asset = getAudioAsset(clip.assetId)
+                  return (
+                    <ClipBlock
+                      key={clip.id}
+                      style={{
+                        ...getClipStyle(clip),
+                        cursor: 'default',
+                      }}
+                      $color={clip.color}
+                      title={`${clip.name} — ПКМ, чтобы удалить`}
+                      onContextMenu={(e) => {
+                        e.preventDefault()
+                        e.stopPropagation()
+                        handleRemoveAudioClip(clip.id)
+                      }}
+                    >
+                      <ClipHeader $color={clip.color}>{clip.name}</ClipHeader>
+                      <ClipBody>
+                        <Waveform>
+                          {(asset?.peaks ?? []).map((peak, i) => (
+                            <WaveBar key={i} style={{ height: `${Math.max(6, peak * 100)}%` }} />
+                          ))}
+                        </Waveform>
+                      </ClipBody>
+                    </ClipBlock>
+                  )
+                })}
+              </TrackRow>
+
               {playheadBar >= 0 && (
                 <PlayheadLine style={{ left: playheadBar * barWidth }} />
               )}
@@ -657,6 +867,12 @@ export default function Playlist() {
           </div>
         </ScrollRight>
       </GridArea>
+
+      {(isDragOver || isImporting) && (
+        <DropOverlay>
+          {isImporting ? 'Импорт аудио…' : 'Отпустите файл, чтобы добавить его в плейлист'}
+        </DropOverlay>
+      )}
     </Container>
   )
 }
