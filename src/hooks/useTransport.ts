@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import type { StoreState } from '../store/types'
-import { audioStats, getContext, playAudioBuffer, playChannel, playNote, resumeAudio, stopAllAudio } from '../audio/engine'
+import { audioStats, getContext, playAudioBuffer, playChannel, playNote, resumeAudio, stopAllAudio, syncMixer } from '../audio/engine'
 import { getAudioAsset } from '../audio/assets'
 
 const BAR_STEPS = 16
@@ -37,11 +37,24 @@ function getLoopRegion(state: StoreState): { start: number; end: number } {
   return { start: 0, end: Math.ceil(endBar) * BAR_STEPS }
 }
 
-function playPatternNotes(state: StoreState, notes: string[], col: number, when: number): void {
+function playPatternNotes(
+  state: StoreState,
+  notes: string[],
+  col: number,
+  when: number,
+  channelId?: number,
+): void {
   notes.forEach((key) => {
     const [noteIndex, noteCol] = key.split('-').map(Number)
-    if (noteCol === col) playNote(state.pianoPreset, noteIndex + 36, 0.5, 0.9, when)
+    if (noteCol === col) playNote(state.pianoPreset, noteIndex + 36, 0.5, 0.9, when, channelId)
   })
+}
+
+function isChannelAudible(state: StoreState, trackIndex: number): boolean {
+  const channel = state.channels[trackIndex]
+  if (!channel) return true
+  if (channel.mute) return false
+  return !state.channels.some((ch) => ch.solo) || channel.solo
 }
 
 function playAudioClipsAtStep(state: StoreState, step: number, when: number): void {
@@ -82,6 +95,8 @@ export function useTransport(): void {
   const expectedRef = useRef(0)
 
   useEffect(() => {
+    syncMixer(getState())
+
     const clearTimers = () => {
       if (timerRef.current) {
         clearTimeout(timerRef.current)
@@ -97,7 +112,8 @@ export function useTransport(): void {
       const channelStep = step % BAR_STEPS
       state.channels.forEach((ch) => {
         if (ch.mute || !ch.steps[channelStep]) return
-        playChannel(ch.preset || 'synth', ((ch.vol ?? 100) / 100) * 0.85, when)
+        if (state.channels.some((c) => c.solo) && !ch.solo) return
+        playChannel(ch.preset || 'synth', ((ch.vol ?? 100) / 100) * 0.85, when, ch.id)
       })
 
       if (state.patternMode) {
@@ -109,11 +125,11 @@ export function useTransport(): void {
 
       const clips = state.playlistClips || []
       clips.forEach((clip) => {
-        const channel = state.channels[clip.track]
-        if (channel && channel.mute) return
+        if (!isChannelAudible(state, clip.track)) return
         const col = step - clip.startBar * BAR_STEPS
         if (col < 0 || col >= clip.lengthBars * BAR_STEPS) return
-        playPatternNotes(state, getPatternNotes(state, clip.patternId), col, when)
+        const channelId = state.channels[clip.track]?.id
+        playPatternNotes(state, getPatternNotes(state, clip.patternId), col, when, channelId)
       })
     }
 
@@ -188,6 +204,7 @@ export function useTransport(): void {
 
     const unsubscribe = subscribe(() => {
       const state = getState()
+      syncMixer(state)
       const playStart = state.playStart ?? 0
       if (state.isPlaying && !playingRef.current) {
         startPlayback(state)

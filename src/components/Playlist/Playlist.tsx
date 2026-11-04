@@ -599,6 +599,9 @@ export default function Playlist() {
       vol: 100,
       pan: 64,
       mute: false,
+      solo: false,
+      sendA: 0,
+      sendB: 0,
       preset: s.pianoPreset || 'synth',
     }
     s.setState({ channels: [...s.channels, newChannel] })

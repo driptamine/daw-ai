@@ -6,6 +6,9 @@ export interface Channel {
   vol: number
   pan: number
   mute: boolean
+  solo: boolean
+  sendA: number
+  sendB: number
   preset: string
 }
 
@@ -15,13 +18,15 @@ export interface Pattern {
   notes: string[]
 }
 
-export interface MixerChannel {
+export type ReturnKind = 'reverb' | 'delay'
+
+export interface ReturnTrack {
   id: number
   name: string
+  kind: ReturnKind
   vol: number
   pan: number
   mute: boolean
-  solo: boolean
   color: string
 }
 
@@ -63,7 +68,7 @@ export interface AppState {
   channels: Channel[]
   pianoPreset: string
   masterVolume: number
-  mixerChannels: MixerChannel[]
+  returnTracks: ReturnTrack[]
   maxZIndex: number
   windowLayout: Record<string, WindowLayout>
   playlistClips: Clip[]

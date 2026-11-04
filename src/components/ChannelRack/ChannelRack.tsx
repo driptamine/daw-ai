@@ -167,7 +167,7 @@ export default function ChannelRack() {
     )
     const s = getState()
     s.setState({ channels: newChannels })
-    if (turningOn) playChannel(ch.preset || 'synth', ((ch.vol ?? 100) / 100) * 0.9)
+    if (turningOn) playChannel(ch.preset || 'synth', ((ch.vol ?? 100) / 100) * 0.9, undefined, ch.id)
   }, [channels, getState])
 
   const handlePresetChange = useCallback((chIdx: number, presetId: string) => {
@@ -175,7 +175,7 @@ export default function ChannelRack() {
       i === chIdx ? { ...c, preset: presetId } : c,
     )
     getState().setState({ channels: newChannels })
-    playChannel(presetId, 0.9)
+    playChannel(presetId, 0.9, undefined, channels[chIdx]?.id)
   }, [channels, getState])
 
   const handleMuteToggle = useCallback((chIdx: number) => {

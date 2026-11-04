@@ -7,18 +7,24 @@ import type {
   PartialState,
   Pattern,
   PersistedProject,
+  ReturnTrack,
   StoreState,
 } from './types'
 
 const defaultChannelList: Channel[] = [
-  { id: 1, name: 'Kick', steps: Array<number>(16).fill(0), color: '#4ade80', vol: 100, pan: 64, mute: false, preset: 'kick' },
-  { id: 2, name: 'Snare', steps: Array<number>(16).fill(0), color: '#60a5fa', vol: 90, pan: 64, mute: false, preset: 'snare' },
-  { id: 3, name: 'HiHat Closed', steps: Array<number>(16).fill(0), color: '#facc15', vol: 85, pan: 64, mute: false, preset: 'hihatClosed' },
-  { id: 4, name: 'HiHat Open', steps: Array<number>(16).fill(0), color: '#f87171', vol: 80, pan: 64, mute: false, preset: 'hihatOpen' },
-  { id: 5, name: 'Clap', steps: Array<number>(16).fill(0), color: '#a78bfa', vol: 85, pan: 64, mute: false, preset: 'clap' },
-  { id: 6, name: 'Bass', steps: Array<number>(16).fill(0), color: '#fb923c', vol: 95, pan: 64, mute: false, preset: 'bass' },
-  { id: 7, name: 'Synth', steps: Array<number>(16).fill(0), color: '#2dd4bf', vol: 75, pan: 64, mute: false, preset: 'synth' },
-  { id: 8, name: 'FX', steps: Array<number>(16).fill(0), color: '#e879f9', vol: 70, pan: 64, mute: false, preset: 'fx' },
+  { id: 1, name: 'Kick', steps: Array<number>(16).fill(0), color: '#4ade80', vol: 100, pan: 64, mute: false, solo: false, sendA: 0, sendB: 0, preset: 'kick' },
+  { id: 2, name: 'Snare', steps: Array<number>(16).fill(0), color: '#60a5fa', vol: 90, pan: 64, mute: false, solo: false, sendA: 22, sendB: 8, preset: 'snare' },
+  { id: 3, name: 'HiHat Closed', steps: Array<number>(16).fill(0), color: '#facc15', vol: 85, pan: 64, mute: false, solo: false, sendA: 8, sendB: 0, preset: 'hihatClosed' },
+  { id: 4, name: 'HiHat Open', steps: Array<number>(16).fill(0), color: '#f87171', vol: 80, pan: 64, mute: false, solo: false, sendA: 16, sendB: 12, preset: 'hihatOpen' },
+  { id: 5, name: 'Clap', steps: Array<number>(16).fill(0), color: '#a78bfa', vol: 85, pan: 64, mute: false, solo: false, sendA: 28, sendB: 14, preset: 'clap' },
+  { id: 6, name: 'Bass', steps: Array<number>(16).fill(0), color: '#fb923c', vol: 95, pan: 64, mute: false, solo: false, sendA: 0, sendB: 0, preset: 'bass' },
+  { id: 7, name: 'Synth', steps: Array<number>(16).fill(0), color: '#2dd4bf', vol: 75, pan: 64, mute: false, solo: false, sendA: 24, sendB: 20, preset: 'synth' },
+  { id: 8, name: 'FX', steps: Array<number>(16).fill(0), color: '#e879f9', vol: 70, pan: 64, mute: false, solo: false, sendA: 30, sendB: 32, preset: 'fx' },
+]
+
+const defaultReturnTracks: ReturnTrack[] = [
+  { id: 1, name: 'A Reverb', kind: 'reverb', vol: 68, pan: 64, mute: false, color: '#60a5fa' },
+  { id: 2, name: 'B Delay', kind: 'delay', vol: 58, pan: 64, mute: false, color: '#a78bfa' },
 ]
 
 const defaultStore: AppState = {
@@ -37,21 +43,13 @@ const defaultStore: AppState = {
   channels: defaultChannelList,
   pianoPreset: 'synth',
   masterVolume: 0.85,
-  mixerChannels: [
-    { id: 1, name: 'Kick', vol: 80, pan: 64, mute: false, solo: false, color: '#4ade80' },
-    { id: 2, name: 'Snare', vol: 75, pan: 64, mute: false, solo: false, color: '#60a5fa' },
-    { id: 3, name: 'HiHat', vol: 70, pan: 64, mute: false, solo: false, color: '#facc15' },
-    { id: 4, name: 'Perc', vol: 70, pan: 64, mute: false, solo: false, color: '#f87171' },
-    { id: 5, name: 'Bass', vol: 85, pan: 64, mute: false, solo: false, color: '#fb923c' },
-    { id: 6, name: 'Synth', vol: 65, pan: 64, mute: false, solo: false, color: '#2dd4bf' },
-    { id: 7, name: 'FX', vol: 60, pan: 64, mute: false, solo: false, color: '#e879f9' },
-  ],
+  returnTracks: defaultReturnTracks,
   maxZIndex: 10,
   windowLayout: {
-    channelRack: { x: 6, y: 6, width: 380, height: 340, zIndex: 4 },
-    pianoRoll: { x: 392, y: 6, width: 600, height: 340, zIndex: 3 },
-    playlist: { x: 6, y: 352, width: 986, height: 720, zIndex: 2 },
-    mixer: { x: 6, y: 678, width: 986, height: 180, zIndex: 1 },
+    channelRack: { x: 6, y: 6, width: 380, height: 300, zIndex: 4 },
+    pianoRoll: { x: 392, y: 6, width: 600, height: 300, zIndex: 3 },
+    playlist: { x: 6, y: 312, width: 986, height: 236, zIndex: 2 },
+    mixer: { x: 6, y: 554, width: 986, height: 262, zIndex: 1 },
   },
   playlistClips: [
     { id: 1, track: 0, startBar: 0, lengthBars: 4, patternId: 1 },
@@ -80,6 +78,18 @@ function normalizeChannels(channels: unknown): Channel[] {
       ...ch,
       steps: Array.isArray(ch.steps) && ch.steps.length ? ch.steps : Array<number>(16).fill(0),
       preset: ch.preset || base.preset,
+    }
+  })
+}
+
+function normalizeReturnTracks(tracks: unknown): ReturnTrack[] {
+  if (!Array.isArray(tracks) || tracks.length === 0) return defaultReturnTracks
+  return (tracks as Partial<ReturnTrack>[]).map((track, i) => {
+    const base = defaultReturnTracks[i % defaultReturnTracks.length]
+    return {
+      ...base,
+      ...track,
+      kind: track.kind === 'delay' ? 'delay' : track.kind === 'reverb' ? 'reverb' : base.kind,
     }
   })
 }
@@ -122,6 +132,7 @@ let store: StoreState = {
   patterns: normalizedPatterns,
   currentPattern: normalizedCurrent,
   channels: normalizeChannels(persisted ? persisted.channels : null),
+  returnTracks: normalizeReturnTracks(persisted ? persisted.returnTracks : null),
   playlistClips: normalizeClips(persisted && persisted.playlistClips, normalizedPatterns),
   audioClips: [],
   listeners: new Set(),
