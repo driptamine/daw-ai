@@ -1,10 +1,11 @@
-name: CI / Netlify Deploy
+name: CI / Deploy to Netlify
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -24,7 +25,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -37,7 +38,7 @@ jobs:
         run: npm run typecheck
 
       - name: Build
-        run: npm run build
+        run: VITE_EAGER_IMPORTS=true npm run build
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -49,7 +50,7 @@ jobs:
   deploy:
     name: Deploy to Netlify
     needs: build
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -58,7 +59,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Download build artifact
@@ -69,7 +70,7 @@ jobs:
 
       # Requires repository secrets:
       #   NETLIFY_AUTH_TOKEN - personal access token from Netlify
-      #   NETLIFY_SITE_ID    - site ID from Netlify (Site settings -> General)
+      #   NETLIFY_SITE_ID    - site ID from Netlify (Site configuration -> General -> Site ID)
       - name: Validate Netlify credentials
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
@@ -107,8 +108,18 @@ jobs:
 
           echo "Netlify credentials are valid."
 
-      - name: Deploy production build
-        run: npx --yes netlify-cli@latest deploy --prod --dir=dist --site "$NETLIFY_SITE_ID" --auth "$NETLIFY_AUTH_TOKEN"
+      - name: Deploy to Netlify
+        uses: nwtgck/actions-netlify@v4.0.0
+        with:
+          publish-dir: ./dist
+          production-branch: main
+          production-deploy: true
+          deploy-message: "Deploy from GitHub Actions commit ${{ github.sha }}"
+          enable-pull-request-comment: false
+          enable-commit-comment: false
+          enable-commit-status: false
+          enable-github-deployment: false
+          fails-without-credentials: true
         env:
           NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
           NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
