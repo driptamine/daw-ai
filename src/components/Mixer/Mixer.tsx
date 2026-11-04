@@ -1,7 +1,9 @@
 import { styled } from '@linaria/react'
 import { theme, fontSize } from '../../styles/theme'
 import { useStore } from '../../store/useStore'
+import { setMasterVolume } from '../../audio/engine'
 import { useEffect, useState, useCallback } from 'react'
+import type { MouseEvent as ReactMouseEvent } from 'react'
 
 const Container = styled.div`
   background: ${theme.panelBg};
@@ -33,7 +35,7 @@ const Strip = styled.div`
   position: relative;
 `
 
-const StripName = styled.div`
+const StripName = styled.div<{ $color?: string }>`
   font-size: 8px;
   color: ${theme.text};
   text-align: center;
@@ -57,7 +59,7 @@ const FaderTrack = styled.div`
   cursor: pointer;
 `
 
-const FaderThumb = styled.div`
+const FaderThumb = styled.div<{ $val: number }>`
   position: absolute;
   bottom: ${({ $val }) => ($val / 100) * 70 + 4}px;
   left: -3px;
@@ -87,7 +89,7 @@ const Meter = styled.div`
   overflow: hidden;
 `
 
-const MeterFill = styled.div`
+const MeterFill = styled.div<{ $val: number }>`
   position: absolute;
   bottom: 0;
   width: 100%;
@@ -102,7 +104,7 @@ const StripLabel = styled.span`
   text-align: center;
 `
 
-const StripBtn = styled.button`
+const StripBtn = styled.button<{ $active: boolean }>`
   background: ${({ $active }) => ($active ? theme.accent : 'transparent')};
   border: 1px solid ${({ $active }) => ($active ? theme.accent : theme.panelBorder)};
   color: ${({ $active }) => ($active ? '#000' : theme.textDim)};
@@ -138,9 +140,20 @@ export default function Mixer() {
   }, [subscribe])
 
   const state = getState()
-  const { mixerChannels } = state
+  const { mixerChannels, masterVolume } = state
 
-  const handleFader = useCallback((idx, e) => {
+  useEffect(() => {
+    setMasterVolume(masterVolume)
+  }, [masterVolume])
+
+  const handleMasterFader = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const y = e.clientY - rect.top
+    const pct = Math.max(0, Math.min(100, Math.round((1 - y / rect.height) * 100)))
+    getState().setState({ masterVolume: pct / 100 })
+  }, [getState])
+
+  const handleFader = useCallback((idx: number, e: ReactMouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect()
     const y = e.clientY - rect.top
     const pct = Math.max(0, Math.min(100, Math.round((1 - y / rect.height) * 100)))
@@ -150,14 +163,14 @@ export default function Mixer() {
     getState().setState({ mixerChannels: newChannels })
   }, [mixerChannels, getState])
 
-  const toggleMute = useCallback((idx) => {
+  const toggleMute = useCallback((idx: number) => {
     const newChannels = mixerChannels.map((c, i) =>
       i === idx ? { ...c, mute: !c.mute } : c,
     )
     getState().setState({ mixerChannels: newChannels })
   }, [mixerChannels, getState])
 
-  const toggleSolo = useCallback((idx) => {
+  const toggleSolo = useCallback((idx: number) => {
     const newChannels = mixerChannels.map((c, i) =>
       i === idx ? { ...c, solo: !c.solo } : c,
     )
@@ -193,10 +206,10 @@ export default function Mixer() {
           <Meter>
             <MeterFill $val={45} />
           </Meter>
-          <FaderTrack>
-            <FaderThumb $val={85} />
+          <FaderTrack onClick={handleMasterFader}>
+            <FaderThumb $val={Math.round(masterVolume * 100)} />
           </FaderTrack>
-          <StripLabel>85</StripLabel>
+          <StripLabel>{Math.round(masterVolume * 100)}</StripLabel>
         </MasterStrip>
       </Strips>
     </Container>

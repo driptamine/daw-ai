@@ -1,6 +1,8 @@
 import { styled } from '@linaria/react'
 import { theme, fontSize } from '../../styles/theme'
 import { useStore } from '../../store/useStore'
+import { playChannel } from '../../audio/engine'
+import { PRESET_OPTIONS } from '../../audio/presets'
 import { useEffect, useState, useCallback } from 'react'
 
 const Container = styled.div`
@@ -20,7 +22,7 @@ const StepNumbers = styled.div`
   padding-left: 48px;
 `
 
-const StepNum = styled.div`
+const StepNum = styled.div<{ $beat: boolean; $current: boolean }>`
   width: 24px;
   text-align: center;
   font-size: ${fontSize.xs};
@@ -37,7 +39,7 @@ const ScrollArea = styled.div`
   flex: 1;
 `
 
-const Row = styled.div`
+const Row = styled.div<{ $even: boolean }>`
   display: flex;
   align-items: center;
   height: 32px;
@@ -73,7 +75,7 @@ const Steps = styled.div`
   padding: 2px 4px;
 `
 
-const Step = styled.div`
+const Step = styled.div<{ $active: boolean; $color: string; $muted: boolean }>`
   width: 24px;
   height: 24px;
   border-radius: 3px;
@@ -111,7 +113,7 @@ const Level = styled.div`
   cursor: pointer;
 `
 
-const LevelFill = styled.div`
+const LevelFill = styled.div<{ $val: number }>`
   position: absolute;
   left: 0;
   top: 0;
@@ -128,6 +130,22 @@ const ChanLabel = styled.span`
   text-align: right;
 `
 
+const PresetSelect = styled.select`
+  background: ${theme.surface};
+  color: ${theme.text};
+  border: 1px solid ${theme.panelBorder};
+  border-radius: 3px;
+  font-size: 8px;
+  width: 60px;
+  padding: 1px 2px;
+  outline: none;
+  cursor: pointer;
+
+  &:focus {
+    border-color: ${theme.accent};
+  }
+`
+
 export default function ChannelRack() {
   const { getState, subscribe } = useStore()
   const [, forceUpdate] = useState(0)
@@ -139,18 +157,28 @@ export default function ChannelRack() {
   const state = getState()
   const { channels, currentStep } = state
 
-  const handleToggleStep = useCallback((chIdx, stepIdx) => {
+  const handleToggleStep = useCallback((chIdx: number, stepIdx: number) => {
     const ch = channels[chIdx]
     const newSteps = [...ch.steps]
-    newSteps[stepIdx] = newSteps[stepIdx] ? 0 : 1
+    const turningOn = !newSteps[stepIdx]
+    newSteps[stepIdx] = turningOn ? 1 : 0
     const newChannels = channels.map((c, i) =>
       i === chIdx ? { ...c, steps: newSteps } : c,
     )
     const s = getState()
     s.setState({ channels: newChannels })
+    if (turningOn) playChannel(ch.preset || 'synth', ((ch.vol ?? 100) / 100) * 0.9)
   }, [channels, getState])
 
-  const handleMuteToggle = useCallback((chIdx) => {
+  const handlePresetChange = useCallback((chIdx: number, presetId: string) => {
+    const newChannels = channels.map((c, i) =>
+      i === chIdx ? { ...c, preset: presetId } : c,
+    )
+    getState().setState({ channels: newChannels })
+    playChannel(presetId, 0.9)
+  }, [channels, getState])
+
+  const handleMuteToggle = useCallback((chIdx: number) => {
     const newChannels = channels.map((c, i) =>
       i === chIdx ? { ...c, mute: !c.mute } : c,
     )
@@ -161,7 +189,7 @@ export default function ChannelRack() {
     <Container>
       <StepNumbers>
         {Array.from({ length: 16 }, (_, i) => (
-          <StepNum key={i} $beat={(i + 1) % 4 === 0} $current={i === currentStep}>
+          <StepNum key={i} $beat={(i + 1) % 4 === 0} $current={i === currentStep % 16}>
             {i + 1}
           </StepNum>
         ))}
@@ -177,7 +205,7 @@ export default function ChannelRack() {
               {ch.steps.map((active, stepIdx) => (
                 <Step
                   key={stepIdx}
-                  $active={active}
+                  $active={active !== 0}
                   $color={ch.color}
                   $muted={ch.mute}
                   onClick={() => handleToggleStep(chIdx, stepIdx)}
@@ -185,6 +213,14 @@ export default function ChannelRack() {
               ))}
             </Steps>
             <Controls>
+              <PresetSelect
+                value={ch.preset || 'synth'}
+                onChange={(e) => handlePresetChange(chIdx, e.target.value)}
+              >
+                {PRESET_OPTIONS.map((p) => (
+                  <option key={p.id} value={p.id}>{p.label}</option>
+                ))}
+              </PresetSelect>
               <ChanLabel>{ch.vol}</ChanLabel>
               <Level onClick={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect()

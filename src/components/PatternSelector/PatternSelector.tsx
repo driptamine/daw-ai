@@ -12,7 +12,7 @@ const Container = styled.div`
   border-bottom: 1px solid ${theme.panelBorder};
 `
 
-const Tab = styled.button`
+const Tab = styled.button<{ $active: boolean }>`
   background: ${({ $active }) => ($active ? theme.accent : 'transparent')};
   color: ${({ $active }) => ($active ? '#000' : theme.text)};
   border: 1px solid ${({ $active }) => ($active ? theme.accent : theme.panelBorder)};

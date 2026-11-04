@@ -1,10 +1,9 @@
-/* eslint-disable react/prop-types */
 import { styled } from '@linaria/react'
 import { theme, fontSize } from '../../styles/theme'
 import { useState, useEffect } from 'react'
 import { useStore } from '../../store/useStore'
 
-const Sidebar = styled.div`
+const Sidebar = styled.div<{ $open: boolean }>`
   background: ${theme.panelBg};
   border-right: 1px solid ${theme.panelBorder};
   display: flex;
@@ -62,7 +61,7 @@ const Section = styled.div`
   margin-bottom: 2px;
 `
 
-const SectionHeader = styled.div`
+const SectionHeader = styled.div<{ $open: boolean }>`
   display: flex;
   align-items: center;
   gap: 4px;
@@ -78,7 +77,7 @@ const SectionHeader = styled.div`
   }
 `
 
-const Arrow = styled.span`
+const Arrow = styled.span<{ $open: boolean }>`
   color: ${theme.textDim};
   font-size: 8px;
   transition: transform 0.1s;
@@ -86,7 +85,7 @@ const Arrow = styled.span`
   display: inline-block;
 `
 
-const ItemList = styled.div`
+const ItemList = styled.div<{ $open: boolean }>`
   overflow: hidden;
   max-height: ${({ $open }) => ($open ? '400px' : '0px')};
   transition: max-height 0.15s ease;
@@ -114,7 +113,7 @@ const Icon = styled.span`
   flex-shrink: 0;
 `
 
-const ToggleBtn = styled.button`
+const ToggleBtn = styled.button<{ $sidebarOpen: boolean }>`
   position: absolute;
   left: ${({ $sidebarOpen }) => ($sidebarOpen ? '220px' : '0px')};
   top: 50%;
@@ -144,7 +143,21 @@ const ToggleBtn = styled.button`
 const FolderIcon = () => <Icon>📁</Icon>
 const FileIcon = () => <Icon>🎵</Icon>
 
-const folders = [
+interface BrowserItem {
+  name: string
+  icon?: string
+  type?: string
+  sub?: string[]
+}
+
+interface BrowserSection {
+  name: string
+  open: boolean
+  icon: string
+  items: BrowserItem[]
+}
+
+const folders: BrowserSection[] = [
   {
     name: 'Current Project',
     open: true,
@@ -189,10 +202,10 @@ const folders = [
   },
 ]
 
-function FolderSection({ section }) {
+function FolderSection({ section }: { section: BrowserSection }) {
   const [open, setOpen] = useState(section.open ?? true)
 
-  const renderItems = (items) =>
+  const renderItems = (items: BrowserItem[]) =>
     items.map((item, i) => {
       if (item.sub) {
         return <SubFolder key={i} item={item} depth={1} />
@@ -219,7 +232,7 @@ function FolderSection({ section }) {
   )
 }
 
-function SubFolder({ item, depth }) {
+function SubFolder({ item, depth }: { item: BrowserItem; depth: number }) {
   const [open, setOpen] = useState(false)
   const pad = 24 + depth * 16
 
@@ -230,7 +243,7 @@ function SubFolder({ item, depth }) {
         <FolderIcon />
         {item.name}
       </Item>
-      {open && item.sub.map((sub, i) => (
+      {open && item.sub?.map((sub, i) => (
         <Item key={i} style={{ paddingLeft: pad + 20 }}>
           <FileIcon />
           {sub}
@@ -240,7 +253,7 @@ function SubFolder({ item, depth }) {
   )
 }
 
-export default function BrowserSidebar({ open, onToggle }) {
+export default function BrowserSidebar({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   const { getState, subscribe } = useStore()
   const [, forceUpdate] = useState(0)
 

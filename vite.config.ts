@@ -6,10 +6,7 @@ export default defineConfig({
   plugins: [
     react(),
     wyw({
-      include: ['src/**/*.{js,jsx}'],
-      babelOptions: {
-        presets: ['@babel/preset-react'],
-      },
+      include: ['src/**/*.{ts,tsx}'],
     }),
   ],
 })

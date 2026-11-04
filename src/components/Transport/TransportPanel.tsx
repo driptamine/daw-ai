@@ -2,6 +2,7 @@ import { styled } from '@linaria/react'
 import { theme, fontSize } from '../../styles/theme'
 import { useStore } from '../../store/useStore'
 import { useState, useEffect, useCallback } from 'react'
+import type { ChangeEvent as ReactChangeEvent } from 'react'
 
 const Container = styled.div`
   display: flex;
@@ -13,7 +14,7 @@ const Container = styled.div`
   height: 44px;
 `
 
-const Button = styled.button`
+const Button = styled.button<{ $active?: boolean }>`
   background: ${({ $active }) => ($active ? theme.accent : theme.surface)};
   color: ${({ $active }) => ($active ? '#000' : theme.text)};
   border: 1px solid ${({ $active }) => ($active ? theme.accent : theme.panelBorder)};
@@ -57,7 +58,7 @@ const Value = styled.span`
   text-align: center;
 `
 
-const Knob = styled.div`
+const Knob = styled.div<{ $angle?: number }>`
   width: 22px;
   height: 22px;
   border-radius: 50%;
@@ -122,7 +123,7 @@ export default function TransportPanel() {
   const patternName = patterns.find((p) => p.id === currentPattern)?.name || `Pattern ${currentPattern}`
   const setState = getState().setState
 
-  const handleBpmChange = useCallback((e) => {
+  const handleBpmChange = useCallback((e: ReactChangeEvent<HTMLInputElement>) => {
     const val = parseInt(e.target.value, 10)
     if (!isNaN(val) && val >= 20 && val <= 999) {
       setState({ bpm: val })
