@@ -42,6 +42,7 @@ export interface AudioClip {
   id: number
   name: string
   assetId: string
+  track: number
   startBar: number
   lengthBars: number
   duration: number

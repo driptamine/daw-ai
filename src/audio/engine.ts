@@ -356,6 +356,7 @@ export function playAudioBuffer(
   when: number,
   offset = 0,
   gainValue = 0.9,
+  channelId?: number,
 ): void {
   const context = getContext()
   const source = context.createBufferSource()
@@ -365,7 +366,8 @@ export function playAudioBuffer(
   source.buffer = buffer
   gain.gain.value = clamp01(gainValue)
   source.connect(gain)
-  gain.connect(master as GainNode)
+  const out = channelId != null ? getChannelStrip(context, channelId).input : (master as GainNode)
+  gain.connect(out)
   source.onended = () => {
     activeSources.delete(source)
   }

@@ -6,7 +6,7 @@ A browser-based digital audio workstation (DAW) built with React, Vite, and [Lin
 
 - **Channel Rack** — 16-step sequencer with per-channel volume, pan, and mute
 - **Piano Roll** — grid-based MIDI note editor
-- **Playlist** — arrangement view for patterning clips across tracks, with drag-and-drop audio clips
+- **Playlist** — arrangement view for patterning clips across tracks, with drag-and-drop audio clips that snap to and move between tracks
 - **Mixer** — Ableton-style channel strips with volume, pan, sends A/B, solo, mute, live metering, two return tracks (reverb and delay), and a master strip
 - **Draggable Windows** — all panels are freely draggable and resizable
 - **Transport** — play/stop, BPM control, pattern/song mode toggle

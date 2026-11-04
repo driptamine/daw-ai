@@ -63,8 +63,10 @@ function playAudioClipsAtStep(state: StoreState, step: number, when: number): vo
   state.audioClips.forEach((clip) => {
     const startStep = Math.round(clip.startBar * BAR_STEPS)
     if (startStep !== step) return
+    const track = clip.track ?? 0
+    if (!isChannelAudible(state, track)) return
     const asset = getAudioAsset(clip.assetId)
-    if (asset) playAudioBuffer(asset.buffer, when)
+    if (asset) playAudioBuffer(asset.buffer, when, 0, 0.9, state.channels[track]?.id)
   })
 }
 
@@ -75,11 +77,13 @@ function playActiveAudioClips(state: StoreState, startStep: number, when: number
   state.audioClips.forEach((clip) => {
     const clipStart = Math.round(clip.startBar * BAR_STEPS)
     if (clipStart >= startStep) return
+    const track = clip.track ?? 0
+    if (!isChannelAudible(state, track)) return
     const asset = getAudioAsset(clip.assetId)
     if (!asset) return
     const offset = (startStep - clipStart) * secondsPerStep
     if (offset >= asset.duration) return
-    playAudioBuffer(asset.buffer, when, offset)
+    playAudioBuffer(asset.buffer, when, offset, 0.9, state.channels[track]?.id)
   })
 }
 

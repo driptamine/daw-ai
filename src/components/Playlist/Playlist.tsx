@@ -313,19 +313,6 @@ const ModeBtn = styled.button<{ $active: boolean }>`
   }
 `
 
-const AudioTrackLabel = styled.div`
-  height: ${ROW_HEIGHT}px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 0 8px;
-  font-size: ${fontSize.xs};
-  color: ${theme.text};
-  border-bottom: 1px solid ${theme.panelBorder};
-  background: ${theme.panelBg};
-  white-space: nowrap;
-`
-
 const AudioHint = styled.div`
   position: absolute;
   left: 10px;
@@ -372,6 +359,7 @@ export default function Playlist() {
   const [, forceUpdate] = useState(0)
   const scrollRef = useRef<HTMLDivElement | null>(null)
   const timelineRef = useRef<HTMLDivElement | null>(null)
+  const tracksRef = useRef<HTMLDivElement | null>(null)
   const labelsInnerRef = useRef<HTMLDivElement | null>(null)
   const dragDepthRef = useRef(0)
   const [isDragOver, setIsDragOver] = useState(false)
@@ -456,9 +444,19 @@ export default function Playlist() {
 
     const snapshot = getState()
     const rect = timelineRef.current?.getBoundingClientRect()
+    const tracksRect = tracksRef.current?.getBoundingClientRect()
     const totalBars = snapshot.playlistLength || 64
     const dropBar = rect
       ? Math.max(0, Math.min(totalBars - 1, Math.floor((e.clientX - rect.left) / BAR_WIDTH)))
+      : 0
+    const dropTrack = tracksRect
+      ? Math.max(
+          0,
+          Math.min(
+            Math.max(0, (snapshot.channels.length || 1) - 1),
+            Math.floor((e.clientY - tracksRect.top) / ROW_HEIGHT),
+          ),
+        )
       : 0
     const secondsPerBar = (60 / snapshot.bpm) * 4
 
@@ -484,6 +482,7 @@ export default function Playlist() {
           id: Date.now() + i,
           name,
           assetId,
+          track: dropTrack,
           startBar: cursor,
           lengthBars,
           duration: buffer.duration,
@@ -573,6 +572,48 @@ export default function Playlist() {
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
   }, [getState])
+
+  const handleAudioClipMouseDown = useCallback(
+    (clip: AudioClip, e: ReactMouseEvent<HTMLDivElement>) => {
+      if (e.button !== 0) return
+      e.stopPropagation()
+      e.preventDefault()
+
+      const s = getState()
+      const totalBars = s.playlistLength || 64
+      const maxTrack = Math.max(0, (s.channels.length || 1) - 1)
+      const startX = e.clientX
+      const startY = e.clientY
+      const origStartBar = clip.startBar
+      const origTrack = clip.track ?? 0
+      const maxStartBar = Math.max(0, totalBars - clip.lengthBars)
+      let moved = false
+
+      const onMove = (me: MouseEvent) => {
+        const deltaBars = Math.round((me.clientX - startX) / BAR_WIDTH)
+        const deltaRows = Math.round((me.clientY - startY) / ROW_HEIGHT)
+        if (!moved && deltaBars === 0 && deltaRows === 0) return
+        moved = true
+        const newStartBar = Math.max(0, Math.min(maxStartBar, origStartBar + deltaBars))
+        const newTrack = Math.max(0, Math.min(maxTrack, origTrack + deltaRows))
+        const cur = getState()
+        cur.setState({
+          audioClips: cur.audioClips.map((c) =>
+            c.id === clip.id ? { ...c, startBar: newStartBar, track: newTrack } : c,
+          ),
+        })
+      }
+
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove)
+        document.removeEventListener('mouseup', onUp)
+      }
+
+      document.addEventListener('mousemove', onMove)
+      document.addEventListener('mouseup', onUp)
+    },
+    [getState],
+  )
 
   const handleTimelineScroll = useCallback((e: ReactUIEvent<HTMLDivElement>) => {
     if (labelsInnerRef.current) {
@@ -740,10 +781,6 @@ export default function Playlist() {
                   </TrackToggleBtn>
                 </TrackLabel>
               ))}
-              <AudioTrackLabel>
-                <TrackName>Audio</TrackName>
-                <span style={{ color: theme.textDim }}>MP3</span>
-              </AudioTrackLabel>
             </div>
           </LabelsViewport>
         </TrackLabels>
@@ -780,7 +817,7 @@ export default function Playlist() {
               onMouseDown={handleTimelineDown}
             />
 
-            <TracksContainer>
+            <TracksContainer ref={tracksRef}>
               {channels.map((ch, trackIdx) => (
                 <TrackRow key={ch.id} $muted={ch.mute}>
                   {Array.from({ length: totalBars }, (_, bar) => (
@@ -864,47 +901,41 @@ export default function Playlist() {
                         />
                       </ClipBlock>
                     ))}
+
+                  {trackIdx === 0 && audioClips.length === 0 && (
+                    <AudioHint>Перетащите MP3, WAV или OGG на нужную дорожку</AudioHint>
+                  )}
+
+                  {audioClips
+                    .filter((clip) => (clip.track ?? 0) === trackIdx)
+                    .map((clip) => {
+                      const asset = getAudioAsset(clip.assetId)
+                      return (
+                        <ClipBlock
+                          key={clip.id}
+                          style={getClipStyle(clip)}
+                          $color={clip.color}
+                          title={`${clip.name} — перетащи, чтобы переместить. ПКМ — удалить.`}
+                          onMouseDown={(e) => handleAudioClipMouseDown(clip, e)}
+                          onContextMenu={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            handleRemoveAudioClip(clip.id)
+                          }}
+                        >
+                          <ClipHeader $color={clip.color}>{clip.name}</ClipHeader>
+                          <ClipBody>
+                            <Waveform>
+                              {(asset?.peaks ?? []).map((peak, i) => (
+                                <WaveBar key={i} style={{ height: `${Math.max(6, peak * 100)}%` }} />
+                              ))}
+                            </Waveform>
+                          </ClipBody>
+                        </ClipBlock>
+                      )
+                    })}
                 </TrackRow>
               ))}
-
-              <TrackRow $muted={false}>
-                {Array.from({ length: totalBars }, (_, bar) => (
-                  <BarCell key={bar} />
-                ))}
-
-                {audioClips.length === 0 && (
-                  <AudioHint>Перетащите MP3, WAV или OGG в плейлист</AudioHint>
-                )}
-
-                {audioClips.map((clip) => {
-                  const asset = getAudioAsset(clip.assetId)
-                  return (
-                    <ClipBlock
-                      key={clip.id}
-                      style={{
-                        ...getClipStyle(clip),
-                        cursor: 'default',
-                      }}
-                      $color={clip.color}
-                      title={`${clip.name} — ПКМ, чтобы удалить`}
-                      onContextMenu={(e) => {
-                        e.preventDefault()
-                        e.stopPropagation()
-                        handleRemoveAudioClip(clip.id)
-                      }}
-                    >
-                      <ClipHeader $color={clip.color}>{clip.name}</ClipHeader>
-                      <ClipBody>
-                        <Waveform>
-                          {(asset?.peaks ?? []).map((peak, i) => (
-                            <WaveBar key={i} style={{ height: `${Math.max(6, peak * 100)}%` }} />
-                          ))}
-                        </Waveform>
-                      </ClipBody>
-                    </ClipBlock>
-                  )
-                })}
-              </TrackRow>
 
               {playheadBar >= 0 && (
                 <PlayheadLine style={{ left: playheadBar * barWidth }} />
