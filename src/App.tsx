@@ -7,7 +7,7 @@ import Mixer from './components/Mixer/Mixer'
 import BrowserSidebar from './components/BrowserSidebar/BrowserSidebar'
 import Playlist from './components/Playlist/Playlist'
 import DraggableWindow from './components/DraggableWindow/DraggableWindow'
-import { useStore } from './store/useStore'
+import { redo, undo, useStore } from './store/useStore'
 import { useTransport } from './hooks/useTransport'
 import { resumeAudio } from './audio/engine'
 import { theme } from './styles/theme'
@@ -69,6 +69,30 @@ function App() {
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [getState])
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'z') return
+      const target = e.target as HTMLElement | null
+      const tag = target && target.tagName
+      if (
+        tag === 'INPUT' ||
+        tag === 'TEXTAREA' ||
+        tag === 'SELECT' ||
+        (target && target.isContentEditable)
+      ) {
+        return
+      }
+      e.preventDefault()
+      if (e.shiftKey) {
+        redo()
+      } else {
+        undo()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [])
 
   return (
     <AppContainer>

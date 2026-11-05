@@ -189,7 +189,7 @@ export default function DraggableWindow({ id, title, actions, children }: Dragga
         display: 'flex',
         flexDirection: 'column',
       }}
-      onMouseDown={() => {
+      onMouseDownCapture={() => {
         const s = getState()
         const win = s.windowLayout[id]
         if (!win) return

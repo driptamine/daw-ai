@@ -46,10 +46,10 @@ const defaultStore: AppState = {
   returnTracks: defaultReturnTracks,
   maxZIndex: 10,
   windowLayout: {
-    playlist: { x: 6, y: 6, width: 986, height: 270, zIndex: 4 },
+    playlist: { x: 6, y: 6, width: 986, height: 540, zIndex: 1 },
     channelRack: { x: 6, y: 282, width: 380, height: 266, zIndex: 3 },
-    pianoRoll: { x: 392, y: 282, width: 600, height: 266, zIndex: 2 },
-    mixer: { x: 6, y: 554, width: 986, height: 262, zIndex: 1 },
+    pianoRoll: { x: 392, y: 282, width: 600, height: 266, zIndex: 4 },
+    mixer: { x: 6, y: 6, width: 986, height: 640, zIndex: 2 },
   },
   playlistClips: [
     { id: 1, track: 0, startBar: 0, lengthBars: 4, patternId: 1 },
@@ -97,6 +97,7 @@ function normalizeReturnTracks(tracks: unknown): ReturnTrack[] {
 function normalizePatterns(patterns: unknown, legacyNotes: unknown): Pattern[] {
   const list = (Array.isArray(patterns) && patterns.length ? patterns : defaultStore.patterns) as Partial<Pattern>[]
   const normalized: Pattern[] = list.map((p, i) => ({
+    ...p,
     id: p.id ?? i + 1,
     name: p.name || `Pattern ${i + 1}`,
     notes: Array.isArray(p.notes) ? p.notes : [],
@@ -134,7 +135,7 @@ let store: StoreState = {
   channels: normalizeChannels(persisted ? persisted.channels : null),
   returnTracks: normalizeReturnTracks(persisted ? persisted.returnTracks : null),
   playlistClips: normalizeClips(persisted && persisted.playlistClips, normalizedPatterns),
-  audioClips: [],
+  audioClips: Array.isArray(persisted?.audioClips) ? persisted.audioClips as AppState['audioClips'] : [],
   listeners: new Set(),
   currentStep: -1,
   playheadRow: -1,
@@ -142,8 +143,99 @@ let store: StoreState = {
   setState: () => {},
 }
 
+const HISTORY_LIMIT = 100
+const COALESCE_MS = 500
+const TRANSIENT_KEYS = new Set<string>(['isPlaying', 'currentStep', 'playheadRow'])
+
+type HistorySnapshot = Omit<AppState, 'isPlaying' | 'currentStep' | 'playheadRow'>
+
+interface HistoryEntry {
+  snapshot: HistorySnapshot
+  keys: Set<string>
+}
+
+const past: HistoryEntry[] = []
+const future: HistoryEntry[] = []
+let lastRecordTime = 0
+let lastRecordKeys = new Set<string>()
+
+function snapshot(state: StoreState): HistorySnapshot {
+  return {
+    playStart: state.playStart,
+    bpm: state.bpm,
+    swing: state.swing,
+    currentPattern: state.currentPattern,
+    patternMode: state.patternMode,
+    metronome: state.metronome,
+    patterns: state.patterns,
+    channels: state.channels,
+    pianoPreset: state.pianoPreset,
+    masterVolume: state.masterVolume,
+    returnTracks: state.returnTracks,
+    maxZIndex: state.maxZIndex,
+    windowLayout: state.windowLayout,
+    playlistClips: state.playlistClips,
+    playlistLength: state.playlistLength,
+    windowVisibility: state.windowVisibility,
+    audioClips: state.audioClips,
+  }
+}
+
+function hasSameKeys(a: Set<string>, b: Set<string>): boolean {
+  if (a.size !== b.size) return false
+  for (const key of a) {
+    if (!b.has(key)) return false
+  }
+  return true
+}
+
+function pushPast(snap: HistorySnapshot, keys: Set<string>): void {
+  const now = Date.now()
+  if (past.length && hasSameKeys(keys, lastRecordKeys) && now - lastRecordTime < COALESCE_MS) {
+    lastRecordTime = now
+    future.length = 0
+    return
+  }
+  past.push({ snapshot: snap, keys })
+  if (past.length > HISTORY_LIMIT) past.shift()
+  lastRecordTime = now
+  lastRecordKeys = keys
+  future.length = 0
+}
+
+function restore(snap: HistorySnapshot): void {
+  store = { ...store, ...snap }
+  schedulePersist(store)
+  store.listeners.forEach((fn) => fn(store))
+}
+
+function resetCoalesce(): void {
+  lastRecordTime = 0
+  lastRecordKeys = new Set()
+}
+
+export function undo(): void {
+  const entry = past.pop()
+  if (!entry) return
+  future.push({ snapshot: snapshot(store), keys: new Set() })
+  if (future.length > HISTORY_LIMIT) future.shift()
+  resetCoalesce()
+  restore(entry.snapshot)
+}
+
+export function redo(): void {
+  const entry = future.pop()
+  if (!entry) return
+  past.push({ snapshot: snapshot(store), keys: new Set() })
+  if (past.length > HISTORY_LIMIT) past.shift()
+  resetCoalesce()
+  restore(entry.snapshot)
+}
+
 function setState(partial: PartialState): void {
   const next = typeof partial === 'function' ? partial(store) : partial
+  const changedKeys = Object.keys(next).filter((key) => !TRANSIENT_KEYS.has(key))
+  if (changedKeys.length) pushPast(snapshot(store), new Set(changedKeys))
   store = { ...store, ...next }
   schedulePersist(store)
   store.listeners.forEach((fn) => fn(store))

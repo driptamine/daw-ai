@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
-import type { StoreState } from '../store/types'
+import type { Pattern, StoreState } from '../store/types'
+import { getPatternSteps, parseNoteKey } from '../audio/patternNotes'
 import { audioStats, getContext, playAudioBuffer, playChannel, playNote, resumeAudio, stopAllAudio, syncMixer } from '../audio/engine'
 import { getAudioAsset } from '../audio/assets'
 
@@ -14,18 +15,15 @@ interface QueueItem {
   time: number
 }
 
-function getPatternNotes(state: StoreState, patternId: number): string[] {
-  const pattern = (state.patterns || []).find((p) => p.id === patternId)
-  return pattern && pattern.notes ? pattern.notes : []
+function getPattern(state: StoreState, patternId: number): Pattern | undefined {
+  return state.patterns.find((pattern) => pattern.id === patternId)
 }
 
 function getLoopRegion(state: StoreState): { start: number; end: number } {
-  if (state.patternMode) return { start: 0, end: PATTERN_STEPS }
+  if (state.patternMode) return { start: 0, end: getPatternSteps(getPattern(state, state.currentPattern)) }
 
   const clips = state.playlistClips || []
   const audioClips = state.audioClips || []
-  if (!clips.length && !audioClips.length) return { start: 0, end: PATTERN_STEPS }
-
   let endBar = 0
   clips.forEach((clip) => {
     endBar = Math.max(endBar, clip.startBar + clip.lengthBars)
@@ -33,20 +31,34 @@ function getLoopRegion(state: StoreState): { start: number; end: number } {
   audioClips.forEach((clip) => {
     endBar = Math.max(endBar, clip.startBar + clip.lengthBars)
   })
+  const cursorBar = Math.max(0, state.playStart) / BAR_STEPS
+  if (cursorBar >= endBar) {
+    endBar = Math.max(state.playlistLength || 64, Math.floor(cursorBar) + 1)
+  }
   if (endBar <= 0) return { start: 0, end: PATTERN_STEPS }
   return { start: 0, end: Math.ceil(endBar) * BAR_STEPS }
 }
 
 function playPatternNotes(
   state: StoreState,
-  notes: string[],
+  pattern: Pattern | undefined,
   col: number,
   when: number,
   channelId?: number,
 ): void {
-  notes.forEach((key) => {
-    const [noteIndex, noteCol] = key.split('-').map(Number)
-    if (noteCol === col) playNote(state.pianoPreset, noteIndex + 36, 0.5, 0.9, when, channelId)
+  pattern?.notes.forEach((key) => {
+    const [noteIndex, noteCol] = parseNoteKey(key)
+    if (noteCol !== col || noteIndex < -36 || noteIndex > 91) return
+    const events = pattern.noteEvents?.[key]
+    if (!events) {
+      playNote(state.pianoPreset, noteIndex + 36, 0.5, 0.9, when, channelId)
+      return
+    }
+    const secondsPerStep = 60 / state.bpm / 4
+    for (const event of events) {
+      playNote(state.pianoPreset, noteIndex + 36, event.durationSteps * secondsPerStep,
+        event.velocity, when + event.offsetSteps * secondsPerStep, channelId)
+    }
   })
 }
 
@@ -92,6 +104,7 @@ export function useTransport(): void {
   const playingRef = useRef(false)
   const stepRef = useRef(0)
   const startRef = useRef(0)
+  const modeRef = useRef(getState().patternMode)
   const nextTimeRef = useRef(0)
   const queueRef = useRef<QueueItem[]>([])
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -121,7 +134,8 @@ export function useTransport(): void {
       })
 
       if (state.patternMode) {
-        playPatternNotes(state, getPatternNotes(state, state.currentPattern), step % PATTERN_STEPS, when)
+        const pattern = getPattern(state, state.currentPattern)
+        playPatternNotes(state, pattern, step % getPatternSteps(pattern), when)
         return
       }
 
@@ -133,7 +147,7 @@ export function useTransport(): void {
         const col = step - clip.startBar * BAR_STEPS
         if (col < 0 || col >= clip.lengthBars * BAR_STEPS) return
         const channelId = state.channels[clip.track]?.id
-        playPatternNotes(state, getPatternNotes(state, clip.patternId), col, when, channelId)
+        playPatternNotes(state, getPattern(state, clip.patternId), col, when, channelId)
       })
     }
 
@@ -186,6 +200,7 @@ export function useTransport(): void {
       const ctx = getContext()
       playingRef.current = true
       startRef.current = state.playStart ?? 0
+      modeRef.current = state.patternMode
       stepRef.current = startRegionStep(state)
       nextTimeRef.current = ctx.currentTime + 0.06
       queueRef.current = []
@@ -218,9 +233,10 @@ export function useTransport(): void {
         stopPlayback()
         return
       }
-      if (state.isPlaying && playStart !== startRef.current) {
+      if (state.isPlaying && (playStart !== startRef.current || state.patternMode !== modeRef.current)) {
         const ctx = getContext()
         startRef.current = playStart
+        modeRef.current = state.patternMode
         stepRef.current = startRegionStep(state)
         nextTimeRef.current = ctx.currentTime + 0.06
         queueRef.current = []
@@ -229,6 +245,7 @@ export function useTransport(): void {
         return
       }
       startRef.current = playStart
+      modeRef.current = state.patternMode
     })
 
     return () => {

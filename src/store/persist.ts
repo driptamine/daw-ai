@@ -13,6 +13,7 @@ export const PERSIST_KEYS = [
   'returnTracks',
   'playlistClips',
   'playlistLength',
+  'audioClips',
   'pianoPreset',
   'masterVolume',
 ] as const

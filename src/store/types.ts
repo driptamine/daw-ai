@@ -12,10 +12,20 @@ export interface Channel {
   preset: string
 }
 
+export interface NoteEvent {
+  offsetSteps: number
+  durationSteps: number
+  velocity: number
+}
+
 export interface Pattern {
   id: number
   name: string
   notes: string[]
+  noteEvents?: Record<string, NoteEvent[]>
+  lengthSteps?: number
+  midiChannel?: number
+  midiProgram?: number
 }
 
 export type ReturnKind = 'reverb' | 'delay'

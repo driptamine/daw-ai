@@ -2,9 +2,17 @@ import { styled } from '@linaria/react'
 import { theme, fontSize } from '../../styles/theme'
 import { useStore } from '../../store/useStore'
 import { playNote } from '../../audio/engine'
+import { importMidi, exportMidi } from '../../audio/midi'
+import { getNoteEvents, getPatternSteps, parseNoteKey } from '../../audio/patternNotes'
+import type { Pattern } from '../../store/types'
 import { PRESET_OPTIONS } from '../../audio/presets'
-import { useState, useEffect, useRef, useCallback } from 'react'
-import type { MouseEvent as ReactMouseEvent } from 'react'
+import { memo, useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
+import type { ChangeEvent, MouseEvent as ReactMouseEvent } from 'react'
+
+const MIN_ZOOM = 0.125
+const MAX_ZOOM = 4
+const GRID_OPTIONS = ['1/2', '1/4', '1/8', '1/16', '1/32', '1/64'] as const
+type GridValue = typeof GRID_OPTIONS[number]
 
 const Container = styled.div`
   background: ${theme.panelBg};
@@ -16,10 +24,13 @@ const Container = styled.div`
 `
 
 const GridArea = styled.div`
+  overflow-anchor: none;
+  scroll-behavior: auto;
   flex: 1;
   min-height: 0;
   overflow: auto;
   position: relative;
+  &:focus { outline: none; }
 `
 
 const GridInner = styled.div`
@@ -34,19 +45,35 @@ const HeaderRow = styled.div`
   z-index: 3;
 `
 
-const StepHeader = styled.div<{ $beat?: boolean }>`
-  width: 24px;
-  height: 16px;
-  background: ${theme.surface};
-  border-bottom: 1px solid ${theme.panelBorder};
-  border-right: ${({ $beat }) =>
-    $beat ? `2px solid ${theme.textDim}` : `1px solid ${theme.panelBorder}`};
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 8px;
-  color: ${theme.textDim};
+const RulerCorner = styled.div`
+  width: 40px;
+  height: 20px;
+  position: sticky;
+  left: 0;
+  z-index: 4;
   flex-shrink: 0;
+  background: ${theme.surface};
+  border-right: 1px solid ${theme.panelBorder};
+  border-bottom: 1px solid ${theme.panelBorder};
+`
+
+const RulerTrack = styled.div`
+  position: relative;
+  flex-shrink: 0;
+  height: 20px;
+  border-bottom: 1px solid ${theme.panelBorder};
+  background-color: ${theme.surface};
+  background-image: linear-gradient(to right, transparent calc(100% - 1px), #657078 0), linear-gradient(to right, transparent calc(100% - 0.5px), rgba(65, 73, 79, var(--piano-grid-opacity, 1)) 0);
+  background-size: calc(var(--piano-step-width, 24px) * 16) 100%, var(--piano-grid-width, 24px) 100%;
+`
+
+const BarLabel = styled.span`
+  position: absolute;
+  top: 3px;
+  color: #aeb9bf;
+  font-size: 10px;
+  line-height: 14px;
+  pointer-events: none;
 `
 
 const BodyRow = styled.div`
@@ -88,43 +115,51 @@ const GridRows = styled.div`
   flex-shrink: 0;
 `
 
-const GridRow = styled.div`
-  display: flex;
+const GridRow = styled.div<{ $dimmed: boolean; $selectTool: boolean }>`
   height: 16px;
-`
-
-const GridCell = styled.div<{
-  $beat: boolean
-  $filled: boolean
-  $dimmed: boolean
-  $selected: boolean
-  $selectTool: boolean
-}>`
-  width: 24px;
-  height: 16px;
-  border-right: ${({ $beat }) =>
-    $beat ? `2px solid ${theme.textDim}` : `1px solid ${theme.gridLine}`};
+  width: 100%;
   border-bottom: 1px solid ${theme.panelBorder};
-  background: ${({ $filled, $dimmed, $selected }) =>
-    $selected ? theme.textBright : ($filled ? theme.accent : ($dimmed ? '#111' : 'transparent'))};
-  box-shadow: ${({ $selected }) => ($selected ? `inset 0 0 0 1px ${theme.accent}` : 'none')};
-  cursor: ${({ $selectTool }) => ($selectTool ? 'default' : 'pointer')};
-  transition: background 0.05s;
-
-  &:hover {
-    background: ${({ $filled, $selected }) =>
-      $selected ? theme.textBright : ($filled ? theme.accentBright : theme.selected)};
-  }
+  background-color: ${({ $dimmed }) => $dimmed ? '#111' : 'transparent'};
+  background-image: linear-gradient(to right, transparent calc(100% - 1px), #657078 0), linear-gradient(to right, transparent calc(100% - 0.5px), rgba(65, 73, 79, var(--piano-grid-opacity, 1)) 0);
+  background-size: calc(var(--piano-step-width, 24px) * 16) 100%, var(--piano-grid-width, 24px) 100%;
+  cursor: ${({ $selectTool }) => $selectTool ? 'default' : 'pointer'};
 `
 
 const Playhead = styled.div<{ $pos: number }>`
   position: absolute;
-  left: ${({ $pos }) => $pos * 24}px;
+  left: calc(var(--piano-step-width, 24px) * ${({ $pos }) => $pos});
   top: 0;
   width: 2px;
   height: 100%;
   background: ${theme.accent};
   pointer-events: none;
+  z-index: 2;
+`
+
+const NoteBlock = styled.div<{ $selected: boolean }>`
+  position: absolute;
+  height: 13px;
+  background: ${({ $selected }) => $selected ? theme.accentBright : theme.accent};
+  border: 1px solid ${({ $selected }) => $selected ? theme.textBright : theme.accentBright};
+  border-radius: 2px;
+  color: ${theme.textBright};
+  font-size: 8px;
+  line-height: 11px;
+  cursor: grab;
+  overflow: hidden;
+  z-index: 1;
+  &:hover { filter: brightness(1.2); }
+`
+
+const NoteResizeHandle = styled.div`
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  max-width: 50%;
+  cursor: ew-resize;
+  border-right: 2px solid #ffffff66;
 `
 
 const ToolBtn = styled.button<{ $active: boolean }>`
@@ -146,8 +181,6 @@ const ToolBtn = styled.button<{ $active: boolean }>`
 `
 
 const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
-const TOTAL_KEYS = 48
-const TOTAL_STEPS = 32
 
 type ScaleMode = 'ionian' | 'aeolian' | 'phrygian' | 'locrian'
 type Tool = 'draw' | 'select'
@@ -166,27 +199,156 @@ interface Cell {
 
 function getNoteName(index: number) {
   const octave = Math.floor(index / 12) + 2
-  const note = noteNames[index % 12]
+  const note = noteNames[((index % 12) + 12) % 12]
   return `${note}${octave}`
 }
 
 function isBlackKey(index: number) {
-  return [1, 3, 6, 8, 10].includes(index % 12)
+  return [1, 3, 6, 8, 10].includes(((index % 12) + 12) % 12)
 }
+
+const GridBackground = memo(function GridBackground({ totalKeys, highestNote, selectTool, scaleMask }: {
+  totalKeys: number; highestNote: number; selectTool: boolean; scaleMask: number
+}) {
+  return <>{Array.from({ length: totalKeys }, (_, row) => {
+    const noteIndex = highestNote - row
+    const pitchClass = ((noteIndex % 12) + 12) % 12
+    return <GridRow key={row}
+      data-piano-row={noteIndex}
+      $selectTool={selectTool}
+      $dimmed={scaleMask !== 0 && !(scaleMask & (1 << pitchClass))}
+    />
+  })}</>
+})
 
 export default function PianoRoll() {
   const { getState, subscribe } = useStore()
   const [, forceUpdate] = useState(0)
-  const [scaleMode, setScaleMode] = useState<ScaleMode | null>(null)
+  const midiInputRef = useRef<HTMLInputElement | null>(null)
+  const importedPitch = useRef<number | null>(null)
+  const [midiBusy, setMidiBusy] = useState(false)
+  const [midiStatus, setMidiStatus] = useState('')
+  const [viewport, setViewport] = useState({ left: 0, width: 600 })
+  const [timelineSteps, setTimelineSteps] = useState(128)
+  const [scaleMode, setScaleMode] = useState<ScaleMode | null>('ionian')
   const [scaleOpen, setScaleOpen] = useState(false)
   const [scaleRoot, setScaleRoot] = useState(0)
   const [scrollLock, setScrollLock] = useState(false)
+  const [lengthSnap, setLengthSnap] = useState<'1/2' | '1/4' | '1/8' | '1/16' | '1/32' | '1/64' | 'off'>(() => {
+    try {
+      const saved = localStorage.getItem('daw-ai:piano-length-snap')
+      return saved === 'off' || saved === '1/2' || saved === '1/4' || saved === '1/8' || saved === '1/32' || saved === '1/64' ? saved : '1/16'
+    } catch { return '1/16' }
+  })
+  const [gridValue, setGridValue] = useState<GridValue>(() => {
+    try {
+      const saved = localStorage.getItem('daw-ai:piano-grid')
+      if (GRID_OPTIONS.includes(saved as GridValue)) return saved as GridValue
+    } catch { /* Storage is optional. */ }
+    return lengthSnap === 'off' ? '1/16' : lengthSnap
+  })
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [tool, setTool] = useState<Tool>('draw')
   const [marquee, setMarquee] = useState<Marquee | null>(null)
   const scaleRef = useRef<HTMLDivElement | null>(null)
   const gridRef = useRef<HTMLDivElement | null>(null)
   const gridRowsRef = useRef<HTMLDivElement | null>(null)
+  const resizeCleanup = useRef<(() => void) | null>(null)
+  const pendingZoomScroll = useRef<number | null>(null)
+  const [zoom, setZoom] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem('daw-ai:piano-zoom')) || 1
+      return Number.isFinite(saved) ? Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, saved)) : 1
+    } catch { return 1 }
+  })
+  const stepWidth = 24 * zoom
+  const newNoteLengthSteps = lengthSnap === 'off' ? 1 : 16 / Number(lengthSnap.slice(2))
+  const gridDivisions = Number(gridValue.slice(2)) / 16
+  const gridWidth = stepWidth / gridDivisions
+  const gridOpacity = Math.max(0, Math.min(1, (gridWidth - 1.5) / 2.5))
+
+  useEffect(() => () => resizeCleanup.current?.(), [])
+
+  const renderedZoom = useRef(zoom)
+  const targetZoom = useRef(zoom)
+  const zoomFrame = useRef(0)
+  const zoomAnchor = useRef({ step: 0, x: 0 })
+
+  const changeZoom = useCallback((requested: number, anchorX?: number) => {
+    const target = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, requested))
+    if (target === targetZoom.current) return
+    const grid = gridRef.current
+    if (grid) {
+      const x = Math.max(40, Math.min(grid.clientWidth, anchorX ?? (grid.clientWidth + 40) / 2))
+      zoomAnchor.current = { x, step: (grid.scrollLeft + x - 40) / (24 * renderedZoom.current) }
+    }
+    targetZoom.current = target
+    if (zoomFrame.current) return
+    let lastTime = performance.now()
+    const tick = (time: number) => {
+      const elapsed = Math.max(1, time - lastTime)
+      lastTime = time
+      const current = renderedZoom.current
+      const remaining = targetZoom.current - current
+      const interpolated = current + remaining * (1 - Math.exp(-elapsed / 65))
+      const next = Math.abs(targetZoom.current - interpolated) < 0.0005 ? targetZoom.current : interpolated
+      const scroller = gridRef.current
+      if (scroller) {
+        const { step, x } = zoomAnchor.current
+        const contentWidth = (gridRowsRef.current?.offsetWidth ?? 0) * next / current + 40
+        const left = Math.max(0, Math.min(Math.max(0, contentWidth - scroller.clientWidth), step * 24 * next + 40 - x))
+        pendingZoomScroll.current = left
+        setViewport({ left, width: scroller.clientWidth })
+      }
+      renderedZoom.current = next
+      setZoom(next)
+      zoomFrame.current = next === targetZoom.current ? 0 : requestAnimationFrame(tick)
+    }
+    zoomFrame.current = requestAnimationFrame(tick)
+  }, [])
+
+  useEffect(() => () => {
+    cancelAnimationFrame(zoomFrame.current)
+    zoomFrame.current = 0
+  }, [])
+
+  useLayoutEffect(() => {
+    const grid = gridRef.current
+    if (grid && pendingZoomScroll.current !== null) {
+      grid.scrollLeft = pendingZoomScroll.current
+      pendingZoomScroll.current = null
+    }
+  }, [zoom])
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try { localStorage.setItem('daw-ai:piano-zoom', String(zoom)) } catch { /* Storage is optional. */ }
+    }, 200)
+    return () => clearTimeout(timer)
+  }, [zoom])
+
+  useEffect(() => {
+    try { localStorage.setItem('daw-ai:piano-length-snap', lengthSnap) } catch { /* Storage is optional. */ }
+  }, [lengthSnap])
+
+  useEffect(() => {
+    try { localStorage.setItem('daw-ai:piano-grid', gridValue) } catch { /* Storage is optional. */ }
+  }, [gridValue])
+
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!grid) return
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return
+      event.preventDefault()
+      event.stopPropagation()
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? grid.clientHeight : 1
+      const delta = Math.max(-120, Math.min(120, event.deltaY * unit))
+      changeZoom(targetZoom.current * Math.exp(-delta * 0.003), event.clientX - grid.getBoundingClientRect().left)
+    }
+    grid.addEventListener('wheel', onWheel, { passive: false })
+    return () => grid.removeEventListener('wheel', onWheel)
+  }, [changeZoom])
 
   useEffect(() => {
     return subscribe(() => forceUpdate((n) => n + 1))
@@ -194,9 +356,41 @@ export default function PianoRoll() {
 
   const state = getState()
   const currentPattern = state.patterns.find((p) => p.id === state.currentPattern) || state.patterns[0]
-  const notes = new Set(currentPattern ? currentPattern.notes : [])
+  const notes = useMemo(() => new Set(currentPattern?.notes ?? []), [currentPattern?.notes])
   const pianoPreset = state.pianoPreset
-  const playheadCol = state.currentStep >= 0 ? state.currentStep % TOTAL_STEPS : -1
+  const patternSteps = getPatternSteps(currentPattern)
+  const totalSteps = Math.max(timelineSteps, patternSteps + 64)
+  const pitches = useMemo(() => [...notes].map((key) => parseNoteKey(key)[0]).filter(Number.isFinite), [notes])
+  const lowestNote = Math.max(-36, Math.min(0, ...pitches))
+  const highestNote = Math.min(91, Math.max(47, ...pitches))
+  const totalKeys = highestNote - lowestNote + 1
+  const playheadCol = state.currentStep >= 0 ? state.currentStep % patternSteps : -1
+  const firstCol = Math.max(0, Math.min(totalSteps - 1, Math.floor(((viewport.left - 40) / stepWidth - 8) / 8) * 8))
+  const lastCol = Math.min(totalSteps, Math.ceil((firstCol + viewport.width / stepWidth + 18) / 8) * 8)
+  const firstBar = Math.floor(firstCol / 16)
+  const visibleBars = Array.from({ length: Math.ceil(lastCol / 16) - firstBar }, (_, index) => firstBar + index)
+
+  useEffect(() => {
+    const visibleEnd = (viewport.left + viewport.width) / stepWidth
+    const reserve = Math.max(32, Math.ceil(viewport.width / stepWidth))
+    if (totalSteps - visibleEnd < reserve) {
+      setTimelineSteps(Math.ceil((visibleEnd + reserve + 64) / 64) * 64)
+    }
+  }, [viewport.left, viewport.width, stepWidth, totalSteps])
+
+  useEffect(() => {
+    if (importedPitch.current === null || !gridRef.current) return
+    gridRef.current.scrollTop = Math.max(0, (highestNote - importedPitch.current) * 16 - gridRef.current.clientHeight / 2)
+    importedPitch.current = null
+  }, [currentPattern?.id, highestNote])
+
+  useEffect(() => {
+    const grid = gridRef.current
+    if (!grid) return
+    const observer = new ResizeObserver(() => setViewport({ left: grid.scrollLeft, width: grid.clientWidth }))
+    observer.observe(grid)
+    return () => observer.disconnect()
+  }, [])
 
   const getNotes = useCallback(() => {
     const s = getState()
@@ -204,11 +398,17 @@ export default function PianoRoll() {
     return p && p.notes ? p.notes : []
   }, [getState])
 
-  const setNotes = useCallback((arr: string[]) => {
+  const setNotes = useCallback((arr: string[], eventOverride?: Pattern['noteEvents']) => {
     const s = getState()
     const pid = s.currentPattern
-    s.setState({ patterns: s.patterns.map((p) => (p.id === pid ? { ...p, notes: arr } : p)) })
-  }, [getState])
+    s.setState({ patterns: s.patterns.map((p) => {
+      if (p.id !== pid) return p
+      const source = eventOverride ?? p.noteEvents
+      const existing = new Set(p.notes)
+      const noteEvents = Object.fromEntries(arr.map((key) => [key, source?.[key] ?? (existing.has(key) ? getNoteEvents(p, key, s.bpm) : [{ offsetSteps: 0, durationSteps: newNoteLengthSteps, velocity: 0.9 }])]))
+      return { ...p, notes: arr, noteEvents }
+    }) })
+  }, [getState, newNoteLengthSteps])
 
   useEffect(() => {
     if (!scaleOpen) return
@@ -256,47 +456,89 @@ export default function PianoRoll() {
   }, [selected, getNotes, setNotes])
 
   const startMove = (originKeys: Set<string>, startX: number, startY: number) => {
+    resizeCleanup.current?.()
+    const originalPattern = getState().patterns.find((pattern) => pattern.id === getState().currentPattern)
+    const originalEvents = Object.fromEntries((originalPattern?.notes ?? []).map((key) => [key, getNoteEvents(originalPattern, key, getState().bpm)]))
     const origin = new Map<string, { r: number; c: number }>()
-    originKeys.forEach((k) => {
-      const [r, c] = k.split('-').map(Number)
-      origin.set(k, { r, c })
+    originKeys.forEach((key) => {
+      const [r, c] = parseNoteKey(key)
+      origin.set(key, { r, c })
     })
     if (!origin.size) return
-    const base = getNotes().filter((k) => !origin.has(k))
+    const base = getNotes().filter((key) => !origin.has(key))
+    const minimumCol = Math.min(...[...origin.values()].map((note) => note.c))
+    const minimumPitch = Math.min(...[...origin.values()].map((note) => note.r))
+    const maximumPitch = Math.max(...[...origin.values()].map((note) => note.r))
+    const startScrollX = gridRef.current?.scrollLeft ?? 0
+    const startScrollY = gridRef.current?.scrollTop ?? 0
+    const previousCursor = document.body.style.cursor
+    let pointerX = startX
+    let pointerY = startY
+    let lastCols = 0
+    let lastRows = 0
+    let dragging = false
+    let frame = 0
 
-    const onMove = (me: MouseEvent) => {
-      const deltaRows = Math.round((startY - me.clientY) / 16)
-      const deltaCols = Math.round((me.clientX - startX) / 24)
+    const apply = () => {
+      const grid = gridRef.current
+      const deltaCols = Math.max(-minimumCol, Math.round((pointerX - startX + (grid?.scrollLeft ?? 0) - startScrollX) / stepWidth))
+      const deltaRows = Math.max(lowestNote - minimumPitch, Math.min(highestNote - maximumPitch,
+        Math.round((startY - pointerY - ((grid?.scrollTop ?? 0) - startScrollY)) / 16)))
+      if (deltaCols === lastCols && deltaRows === lastRows) return
+      lastCols = deltaCols
+      lastRows = deltaRows
       const result = new Set(base)
       const nextSelected = new Set<string>()
-      origin.forEach(({ r, c }) => {
-        const nr = Math.max(0, Math.min(TOTAL_KEYS - 1, r + deltaRows))
-        const nc = Math.max(0, Math.min(TOTAL_STEPS - 1, c + deltaCols))
-        const nk = `${nr}-${nc}`
-        nextSelected.add(nk)
-        result.add(nk)
+      const nextEvents: NonNullable<Pattern['noteEvents']> = Object.fromEntries(base.filter((key) => originalEvents[key]).map((key) => [key, originalEvents[key]]))
+      origin.forEach(({ r, c }, originalKey) => {
+        const key = `${r + deltaRows}-${c + deltaCols}`
+        nextSelected.add(key)
+        result.add(key)
+        if (originalEvents[originalKey]) nextEvents[key] = [...(nextEvents[key] ?? []), ...originalEvents[originalKey]]
       })
-      setNotes([...result])
+      setNotes([...result], nextEvents)
       setSelected(nextSelected)
     }
-
+    const onMove = (event: MouseEvent) => {
+      pointerX = event.clientX
+      pointerY = event.clientY
+      if (!dragging && Math.abs(pointerX - startX) + Math.abs(pointerY - startY) < 3) return
+      dragging = true
+      document.body.style.cursor = 'grabbing'
+      apply()
+    }
+    const tick = () => {
+      const grid = gridRef.current
+      if (grid && dragging) {
+        const rect = grid.getBoundingClientRect()
+        const before = grid.scrollLeft
+        if (pointerX > rect.right - 24) grid.scrollLeft += 12
+        else if (pointerX < rect.left + 64) grid.scrollLeft -= 12
+        if (grid.scrollLeft !== before) apply()
+      }
+      frame = requestAnimationFrame(tick)
+    }
     const onUp = () => {
+      cancelAnimationFrame(frame)
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = previousCursor
+      resizeCleanup.current = null
     }
-
+    resizeCleanup.current = onUp
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
+    frame = requestAnimationFrame(tick)
   }
 
   const cellFromEvent = (clientX: number, clientY: number): Cell | null => {
     const el = gridRowsRef.current
     if (!el) return null
     const rect = el.getBoundingClientRect()
-    const col = Math.floor((clientX - rect.left) / 24)
+    const col = Math.floor((clientX - rect.left) / stepWidth)
     const row = Math.floor((clientY - rect.top) / 16)
-    if (col < 0 || col >= TOTAL_STEPS || row < 0 || row >= TOTAL_KEYS) return null
-    return { noteIndex: TOTAL_KEYS - 1 - row, col }
+    if (col < 0 || col >= totalSteps || row < 0 || row >= totalKeys) return null
+    return { noteIndex: highestNote - row, col }
   }
 
   const startPaint = (mode: 'add' | 'erase', startKey: string) => {
@@ -312,7 +554,7 @@ export default function PianoRoll() {
       if (mode === 'add') {
         if (!set.has(key)) {
           set.add(key)
-          playNote(s.pianoPreset, cell.noteIndex + 36, 0.5, 0.9)
+          playNote(s.pianoPreset, cell.noteIndex + 36, newNoteLengthSteps * 60 / s.bpm / 4, 0.9)
           setNotes([...set])
         }
       } else if (set.has(key)) {
@@ -353,7 +595,7 @@ export default function PianoRoll() {
             if (additive) next.delete(tapKey)
           } else {
             next.add(tapKey)
-            playNote(s.pianoPreset, parseInt(tapKey.split('-')[0], 10) + 36, 0.5, 0.9)
+            playNote(s.pianoPreset, parseNoteKey(tapKey)[0] + 36, 0.5, 0.9)
           }
           setSelected(next)
         } else if (!additive) {
@@ -370,11 +612,14 @@ export default function PianoRoll() {
       const bottom = Math.max(oy, ey)
       const picked = new Set(additive ? selected : [])
       getNotes().forEach((k) => {
-        const [noteIndex, c] = k.split('-').map(Number)
-        const row = TOTAL_KEYS - 1 - noteIndex
-        const cx = c * 24 + 12
-        const cy = row * 16 + 8
-        if (cx >= left && cx <= right && cy >= top && cy <= bottom) picked.add(k)
+        const [noteIndex, c] = parseNoteKey(k)
+        const row = highestNote - noteIndex
+        const pattern = getState().patterns.find((pattern) => pattern.id === getState().currentPattern)
+        const intersects = getNoteEvents(pattern, k, getState().bpm).some((note) => {
+          const x = (c + note.offsetSteps) * stepWidth
+          return x <= right && x + note.durationSteps * stepWidth >= left && row * 16 + 14 >= top && row * 16 + 1 <= bottom
+        })
+        if (intersects) picked.add(k)
       })
       setSelected(picked)
     }
@@ -401,7 +646,7 @@ export default function PianoRoll() {
       } else {
         set.add(key)
         mode = 'add'
-        playNote(s.pianoPreset, noteIndex + 36, 0.5, 0.9)
+        playNote(s.pianoPreset, noteIndex + 36, newNoteLengthSteps * 60 / s.bpm / 4, 0.9)
       }
       setNotes([...set])
       setSelected(new Set())
@@ -438,15 +683,122 @@ export default function PianoRoll() {
     }
   }
 
+  const startNoteResize = (key: string, eventIndex: number, event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return
+    event.preventDefault()
+    event.stopPropagation()
+    resizeCleanup.current?.()
+    const state = getState()
+    const pattern = state.patterns.find((item) => item.id === state.currentPattern)
+    if (!pattern) return
+    const original = getNoteEvents(pattern, key, state.bpm)[eventIndex]
+    if (!original) return
+    if (!selected.has(key)) setSelected(new Set([key]))
+    const startX = event.clientX
+    const startScroll = gridRef.current?.scrollLeft ?? 0
+    const previousCursor = document.body.style.cursor
+    let pointerX = startX
+    let fine = lengthSnap === 'off' || event.altKey
+    let frame = 0
+    let previousDuration = original.durationSteps
+    let started = false
+    document.body.style.cursor = 'ew-resize'
+    const apply = () => {
+      const delta = (pointerX - startX + (gridRef.current?.scrollLeft ?? 0) - startScroll) / stepWidth
+      if (!started && Math.abs(delta * stepWidth) < 2) return
+      started = true
+      const raw = original.durationSteps + delta
+      const snapSteps = newNoteLengthSteps
+      const durationSteps = fine ? Math.max(1 / 16, raw) : Math.max(snapSteps, Math.round(raw / snapSteps) * snapSteps)
+      if (durationSteps === previousDuration) return
+      previousDuration = durationSteps
+      const current = getState()
+      current.setState({ patterns: current.patterns.map((item) => {
+        if (item.id !== pattern.id || !item.notes.includes(key)) return item
+        const events = [...getNoteEvents(item, key, current.bpm)]
+        if (!events[eventIndex]) return item
+        events[eventIndex] = { ...events[eventIndex], durationSteps }
+        return { ...item, noteEvents: { ...item.noteEvents, [key]: events } }
+      }) })
+    }
+    const onMove = (move: MouseEvent) => { pointerX = move.clientX; fine = lengthSnap === 'off' || move.altKey; apply() }
+    const tick = () => {
+      const grid = gridRef.current
+      if (grid) {
+        const rect = grid.getBoundingClientRect()
+        const before = grid.scrollLeft
+        if (pointerX > rect.right - 24) grid.scrollLeft += 12
+        else if (pointerX < rect.left + 64) grid.scrollLeft -= 12
+        if (grid.scrollLeft !== before) apply()
+      }
+      frame = requestAnimationFrame(tick)
+    }
+    const onUp = () => {
+      cancelAnimationFrame(frame)
+      document.removeEventListener('mousemove', onMove)
+      document.removeEventListener('mouseup', onUp)
+      document.body.style.cursor = previousCursor
+      resizeCleanup.current = null
+    }
+    resizeCleanup.current = onUp
+    document.addEventListener('mousemove', onMove)
+    document.addEventListener('mouseup', onUp)
+    frame = requestAnimationFrame(tick)
+  }
+
+  const handleMidiImport = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file) return
+    setMidiBusy(true)
+    setMidiStatus('')
+    try {
+      const data = await file.arrayBuffer()
+      const current = getState()
+      const firstId = Math.max(0, ...current.patterns.map((pattern) => pattern.id)) + 1
+      const result = importMidi(data, file.name, firstId, current.bpm)
+      importedPitch.current = parseNoteKey(result.patterns[0].notes[0])[0]
+      current.setState({ patterns: [...current.patterns, ...result.patterns], currentPattern: result.patterns[0].id, bpm: result.bpm, patternMode: true, isPlaying: false, playStart: 0, currentStep: -1 })
+      setSelected(new Set())
+      if (gridRef.current) gridRef.current.scrollLeft = 0
+      setMidiStatus(`Imported ${result.noteCount} notes · ${result.patterns.length} patterns${result.flattenedTempo ? ' · tempo changes converted to fixed BPM' : ''}`)
+    } catch (error) {
+      setMidiStatus(error instanceof Error ? error.message : 'Не удалось импортировать MIDI.')
+    } finally {
+      setMidiBusy(false)
+    }
+  }
+
+  const handleMidiExport = () => {
+    try {
+      if (!currentPattern) return
+      const bytes = exportMidi(currentPattern, getState().bpm)
+      const url = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer], { type: 'audio/midi' }))
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${currentPattern.name.replace(/[\\/:*?"<>|]/g, '_') || 'pattern'}.mid`
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+      setMidiStatus(`Exported ${currentPattern.name}.mid`)
+    } catch (error) {
+      setMidiStatus(error instanceof Error ? error.message : 'Не удалось экспортировать MIDI.')
+    }
+  }
+
   return (
-    <Container>
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '2px 8px', background: theme.surface, borderBottom: `1px solid ${theme.panelBorder}`, flexShrink: 0 }}>
+    <Container aria-label="Piano Roll" style={{ ['--piano-step-width' as string]: `${stepWidth}px`, ['--piano-grid-width' as string]: `${gridWidth}px`, ['--piano-grid-opacity' as string]: gridOpacity }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', padding: '2px 8px', background: theme.surface, borderBottom: `1px solid ${theme.panelBorder}`, flexShrink: 0 }}>
         <ToolBtn $active={tool === 'draw'} title="Draw" onClick={() => setTool('draw')}>
           ✏ Draw
         </ToolBtn>
         <ToolBtn $active={tool === 'select'} title="Select" onClick={() => setTool('select')}>
           ▢ Select
         </ToolBtn>
+        <ToolBtn $active={false} disabled={zoom <= MIN_ZOOM} aria-label="Piano roll zoom out" title="Уменьшить ширину сетки" onClick={() => changeZoom(targetZoom.current / 1.25)}>−</ToolBtn>
+        <ToolBtn $active={false} title="Сбросить горизонтальный масштаб на 100%" onClick={() => changeZoom(1)} style={{ minWidth: 48, justifyContent: 'center', fontVariantNumeric: 'tabular-nums' }}>{Number((zoom * 100).toFixed(1))}%</ToolBtn>
+        <ToolBtn $active={false} disabled={zoom >= MAX_ZOOM} aria-label="Piano roll zoom in" title="Увеличить ширину сетки" onClick={() => changeZoom(targetZoom.current * 1.25)}>+</ToolBtn>
         <button
           onClick={() => scrollByOctave(-1)}
           style={{
@@ -492,8 +844,58 @@ export default function PianoRoll() {
         >
           🔒
         </button>
-        <span style={{ fontSize: fontSize.xs, color: theme.textDim }}>Snap: 1/4</span>
-        <span style={{ fontSize: fontSize.xs, color: theme.textDim }}>Snap: 1/4</span>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: fontSize.xs, color: theme.textDim }}>
+          Grid
+          <select
+            aria-label="Piano roll grid"
+            value={gridValue}
+            title="Плотность линий сетки"
+            onChange={(event) => {
+              const value = event.target.value as GridValue
+              if (GRID_OPTIONS.includes(value)) {
+                setGridValue(value)
+                event.currentTarget.blur()
+                gridRef.current?.focus({ preventScroll: true })
+              }
+            }}
+            style={{ background: theme.surface, color: theme.text, border: `1px solid ${theme.panelBorder}`, borderRadius: 3, padding: '1px 4px', fontSize: fontSize.xs, cursor: 'pointer' }}
+          >
+            {GRID_OPTIONS.map((value) => <option key={value} value={value}>{value}</option>)}
+          </select>
+        </label>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: fontSize.xs, color: theme.textDim }}>
+          Snap
+          <select
+            aria-label="Note length snap"
+            value={lengthSnap}
+            title="Note length snap. Hold Alt for free resizing."
+            onChange={(event) => {
+              const value = event.target.value
+              if (value === '1/2' || value === '1/4' || value === '1/8' || value === '1/16' || value === '1/32' || value === '1/64' || value === 'off') {
+                setLengthSnap(value)
+                event.currentTarget.blur()
+                gridRef.current?.focus({ preventScroll: true })
+              }
+            }}
+            style={{
+              background: theme.surface,
+              color: lengthSnap === 'off' ? theme.textDim : theme.text,
+              border: `1px solid ${lengthSnap === 'off' ? theme.panelBorder : theme.accent}`,
+              borderRadius: 3,
+              padding: '1px 4px',
+              fontSize: fontSize.xs,
+              cursor: 'pointer',
+            }}
+          >
+            <option value="1/2">1/2</option>
+            <option value="1/4">1/4</option>
+            <option value="1/8">1/8</option>
+            <option value="1/16">1/16</option>
+            <option value="1/32">1/32</option>
+            <option value="1/64">1/64</option>
+            <option value="off">Off</option>
+          </select>
+        </label>
         <span style={{ fontSize: fontSize.xs, color: theme.textDim }}>Velocity: 100</span>
         <div ref={scaleRef} style={{ position: 'relative' }}>
           <button
@@ -568,6 +970,8 @@ export default function PianoRoll() {
             onChange={(e) => {
               getState().setState({ pianoPreset: e.target.value })
               playNote(e.target.value, 60, 0.5, 0.9)
+              e.currentTarget.blur()
+              gridRef.current?.focus({ preventScroll: true })
             }}
             style={{
               background: theme.surface,
@@ -587,50 +991,86 @@ export default function PianoRoll() {
         </label>
       </div>
 
-      <GridArea ref={gridRef}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 6, padding: '4px 8px', background: theme.surface, borderBottom: `1px solid ${theme.panelBorder}`, flexShrink: 0 }}>
+        <input ref={midiInputRef} type="file" accept=".mid,.midi,audio/midi,audio/x-midi" hidden onChange={handleMidiImport} />
+        <ToolBtn $active={false} disabled={midiBusy} onClick={() => midiInputRef.current?.click()} title="Импортировать MIDI-треки в новые паттерны">{midiBusy ? 'Importing…' : 'Import MIDI'}</ToolBtn>
+        <ToolBtn $active={false} disabled={!currentPattern?.notes.length || midiBusy} onClick={handleMidiExport} title="Экспортировать ноты выбранного паттерна в .mid">Export MIDI</ToolBtn>
+        {midiStatus && <span role="status" style={{ color: theme.text, fontSize: fontSize.xs }}>{midiStatus}</span>}
+      </div>
+      <GridArea data-piano-grid tabIndex={-1} ref={gridRef} onScroll={(event) => { const grid = event.currentTarget; setViewport((previous) => Math.abs(previous.left - grid.scrollLeft) < 1 && previous.width === grid.clientWidth ? previous : { left: grid.scrollLeft, width: grid.clientWidth }) }}>
         <GridInner>
           <HeaderRow>
-            <StepHeader style={{ width: 40, position: 'sticky', left: 0, zIndex: 4, background: theme.surface }} />
-            {Array.from({ length: TOTAL_STEPS }, (_, i) => (
-              <StepHeader key={i} $beat={(i + 1) % 4 === 0}>{i + 1}</StepHeader>
-            ))}
+            <RulerCorner />
+            <RulerTrack data-piano-ruler style={{ width: totalSteps * stepWidth }}>
+              {visibleBars.map((bar) => (
+                <BarLabel key={bar} style={{ left: bar * 16 * stepWidth + 4 }} title={`Такт ${bar + 1}`}>{bar + 1}</BarLabel>
+              ))}
+            </RulerTrack>
           </HeaderRow>
 
           <BodyRow>
             <KeysColumn>
-              {Array.from({ length: TOTAL_KEYS }, (_, i) => (
+              {Array.from({ length: totalKeys }, (_, i) => (
                 <Key
                   key={i}
-                  $black={isBlackKey(TOTAL_KEYS - 1 - i)}
-                  $dimmed={!!(activeScaleNotes && !activeScaleNotes.includes((TOTAL_KEYS - 1 - i) % 12))}
-                  onMouseDown={() => playNote(pianoPreset, (TOTAL_KEYS - 1 - i) + 36, 0.6, 0.9)}
+                  $black={isBlackKey(highestNote - i)}
+                  $dimmed={!!(activeScaleNotes && !activeScaleNotes.includes((((highestNote - i) % 12) + 12) % 12))}
+                  onMouseDown={() => playNote(pianoPreset, (highestNote - i) + 36, 0.6, 0.9)}
                 >
-                  {isBlackKey(TOTAL_KEYS - 1 - i) ? '' : getNoteName(TOTAL_KEYS - 1 - i)}
+                  {isBlackKey(highestNote - i) ? '' : getNoteName(highestNote - i)}
                 </Key>
               ))}
             </KeysColumn>
 
-            <GridRows ref={gridRowsRef}>
-              {Array.from({ length: TOTAL_KEYS }, (_, row) => (
-                <GridRow key={row}>
-                  {Array.from({ length: TOTAL_STEPS }, (_, col) => {
-                    const noteIndex = TOTAL_KEYS - 1 - row
-                    const cellKey = `${noteIndex}-${col}`
-                    return (
-                      <GridCell
-                        key={col}
-                        $beat={(col + 1) % 4 === 0}
-                        $filled={notes.has(cellKey)}
-                        $selected={selected.has(cellKey)}
-                        $selectTool={tool === 'select'}
-                        $dimmed={!!(activeScaleNotes && !activeScaleNotes.includes(noteIndex % 12))}
-                        onMouseDown={(e) => handleCellMouseDown(noteIndex, col, e)}
-                        onContextMenu={(e) => handleCellContextMenu(noteIndex, col, e)}
-                      />
-                    )
-                  })}
-                </GridRow>
-              ))}
+            <GridRows ref={gridRowsRef} style={{ width: totalSteps * stepWidth }}
+              onMouseDown={(event) => {
+                const cell = cellFromEvent(event.clientX, event.clientY)
+                if (cell) handleCellMouseDown(cell.noteIndex, cell.col, event)
+              }}
+              onContextMenu={(event) => {
+                const cell = cellFromEvent(event.clientX, event.clientY)
+                if (cell) handleCellContextMenu(cell.noteIndex, cell.col, event)
+              }}
+            >
+              <GridBackground
+                totalKeys={totalKeys}
+                highestNote={highestNote}
+                selectTool={tool === 'select'}
+                scaleMask={activeScaleNotes ? activeScaleNotes.reduce((mask, pitch) => mask | (1 << pitch), 0) : 0}
+              />
+              {[...notes].flatMap((key) => {
+                const [noteIndex, col] = parseNoteKey(key)
+                if (!Number.isFinite(noteIndex) || !Number.isFinite(col)) return []
+                return getNoteEvents(currentPattern, key, state.bpm).map((note, index) => {
+                  const start = col + note.offsetSteps
+                  if (start + note.durationSteps < firstCol || start > lastCol) return null
+                  return (
+                    <NoteBlock
+                      key={`${key}:${index}`}
+                      data-note-key={key}
+                      data-note-event={index}
+                      data-duration-steps={note.durationSteps}
+                      $selected={selected.has(key)}
+                      style={{ left: start * stepWidth, top: (highestNote - noteIndex) * 16 + 1, width: Math.max(3, note.durationSteps * stepWidth - 1) }}
+                      title={`${getNoteName(noteIndex)} · ${Number(note.durationSteps.toFixed(2))} steps · drag right edge to resize`}
+                      onMouseDown={(event) => {
+                        if (event.button !== 0) return
+                        event.stopPropagation()
+                        if (tool === 'select') handleCellMouseDown(noteIndex, col, event)
+                        else {
+                          event.preventDefault()
+                          setSelected(new Set([key]))
+                          startMove(new Set([key]), event.clientX, event.clientY)
+                        }
+                      }}
+                      onContextMenu={(event) => { event.stopPropagation(); handleCellContextMenu(noteIndex, col, event) }}
+                    >
+                      <span style={{ paddingLeft: 3, pointerEvents: 'none' }}>{getNoteName(noteIndex)}</span>
+                      <NoteResizeHandle data-resize-note={key} title="Изменить длину ноты · Alt — без привязки" onMouseDown={(event) => startNoteResize(key, index, event)} />
+                    </NoteBlock>
+                  )
+                })
+              })}
               {playheadCol >= 0 && <Playhead $pos={playheadCol} />}
               {marquee && (
                 <div
