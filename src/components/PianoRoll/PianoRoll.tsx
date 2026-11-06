@@ -2,10 +2,12 @@ import { styled } from '@linaria/react'
 import { theme, fontSize } from '../../styles/theme'
 import { useStore } from '../../store/useStore'
 import { playNote } from '../../audio/engine'
-import { importMidi, exportMidi } from '../../audio/midi'
+import { downloadMidi } from '../../audio/midi'
+import { importMidiIntoProject } from '../../store/midi'
 import { getNoteEvents, getPatternSteps, parseNoteKey } from '../../audio/patternNotes'
 import type { Pattern } from '../../store/types'
-import { PRESET_OPTIONS } from '../../audio/presets'
+import SoundSelect from '../SoundSelect/SoundSelect'
+import { setPatternSound } from '../../store/instruments'
 import { memo, useMemo, useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import type { ChangeEvent, MouseEvent as ReactMouseEvent } from 'react'
 
@@ -225,7 +227,7 @@ export default function PianoRoll() {
   const { getState, subscribe } = useStore()
   const [, forceUpdate] = useState(0)
   const midiInputRef = useRef<HTMLInputElement | null>(null)
-  const importedPitch = useRef<number | null>(null)
+  const displayedPattern = useRef<number | undefined>(undefined)
   const [midiBusy, setMidiBusy] = useState(false)
   const [midiStatus, setMidiStatus] = useState('')
   const [viewport, setViewport] = useState({ left: 0, width: 600 })
@@ -357,7 +359,7 @@ export default function PianoRoll() {
   const state = getState()
   const currentPattern = state.patterns.find((p) => p.id === state.currentPattern) || state.patterns[0]
   const notes = useMemo(() => new Set(currentPattern?.notes ?? []), [currentPattern?.notes])
-  const pianoPreset = state.pianoPreset
+  const pianoPreset = currentPattern?.soundPreset ?? state.pianoPreset
   const patternSteps = getPatternSteps(currentPattern)
   const totalSteps = Math.max(timelineSteps, patternSteps + 64)
   const pitches = useMemo(() => [...notes].map((key) => parseNoteKey(key)[0]).filter(Number.isFinite), [notes])
@@ -379,10 +381,14 @@ export default function PianoRoll() {
   }, [viewport.left, viewport.width, stepWidth, totalSteps])
 
   useEffect(() => {
-    if (importedPitch.current === null || !gridRef.current) return
-    gridRef.current.scrollTop = Math.max(0, (highestNote - importedPitch.current) * 16 - gridRef.current.clientHeight / 2)
-    importedPitch.current = null
-  }, [currentPattern?.id, highestNote])
+    if (!currentPattern || displayedPattern.current === currentPattern.id || !gridRef.current) return
+    displayedPattern.current = currentPattern.id
+    const firstPitch = currentPattern.notes.length ? parseNoteKey(currentPattern.notes[0])[0] : 24
+    const pitch = Number.isFinite(firstPitch) ? firstPitch : 24
+    gridRef.current.scrollTop = Math.max(0, (highestNote - pitch) * 16 - gridRef.current.clientHeight / 2)
+    gridRef.current.scrollLeft = 0
+    setSelected(new Set())
+  }, [currentPattern, highestNote])
 
   useEffect(() => {
     const grid = gridRef.current
@@ -396,6 +402,11 @@ export default function PianoRoll() {
     const s = getState()
     const p = s.patterns.find((pp) => pp.id === s.currentPattern) || s.patterns[0]
     return p && p.notes ? p.notes : []
+  }, [getState])
+
+  const getCurrentSound = useCallback(() => {
+    const current = getState()
+    return current.patterns.find((pattern) => pattern.id === current.currentPattern)?.soundPreset ?? current.pianoPreset
   }, [getState])
 
   const setNotes = useCallback((arr: string[], eventOverride?: Pattern['noteEvents']) => {
@@ -554,7 +565,7 @@ export default function PianoRoll() {
       if (mode === 'add') {
         if (!set.has(key)) {
           set.add(key)
-          playNote(s.pianoPreset, cell.noteIndex + 36, newNoteLengthSteps * 60 / s.bpm / 4, 0.9)
+          playNote(getCurrentSound(), cell.noteIndex + 36, newNoteLengthSteps * 60 / s.bpm / 4, 0.9)
           setNotes([...set])
         }
       } else if (set.has(key)) {
@@ -589,13 +600,12 @@ export default function PianoRoll() {
       setMarquee(null)
       if (!moved) {
         if (tapKey) {
-          const s = getState()
           const next = new Set(additive ? selected : [])
           if (next.has(tapKey)) {
             if (additive) next.delete(tapKey)
           } else {
             next.add(tapKey)
-            playNote(s.pianoPreset, parseNoteKey(tapKey)[0] + 36, 0.5, 0.9)
+            playNote(getCurrentSound(), parseNoteKey(tapKey)[0] + 36, 0.5, 0.9)
           }
           setSelected(next)
         } else if (!additive) {
@@ -646,7 +656,7 @@ export default function PianoRoll() {
       } else {
         set.add(key)
         mode = 'add'
-        playNote(s.pianoPreset, noteIndex + 36, newNoteLengthSteps * 60 / s.bpm / 4, 0.9)
+        playNote(getCurrentSound(), noteIndex + 36, newNoteLengthSteps * 60 / s.bpm / 4, 0.9)
       }
       setNotes([...set])
       setSelected(new Set())
@@ -753,12 +763,7 @@ export default function PianoRoll() {
     setMidiBusy(true)
     setMidiStatus('')
     try {
-      const data = await file.arrayBuffer()
-      const current = getState()
-      const firstId = Math.max(0, ...current.patterns.map((pattern) => pattern.id)) + 1
-      const result = importMidi(data, file.name, firstId, current.bpm)
-      importedPitch.current = parseNoteKey(result.patterns[0].notes[0])[0]
-      current.setState({ patterns: [...current.patterns, ...result.patterns], currentPattern: result.patterns[0].id, bpm: result.bpm, patternMode: true, isPlaying: false, playStart: 0, currentStep: -1 })
+      const result = await importMidiIntoProject(file, getState)
       setSelected(new Set())
       if (gridRef.current) gridRef.current.scrollLeft = 0
       setMidiStatus(`Imported ${result.noteCount} notes · ${result.patterns.length} patterns${result.flattenedTempo ? ' · tempo changes converted to fixed BPM' : ''}`)
@@ -772,16 +777,8 @@ export default function PianoRoll() {
   const handleMidiExport = () => {
     try {
       if (!currentPattern) return
-      const bytes = exportMidi(currentPattern, getState().bpm)
-      const url = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer], { type: 'audio/midi' }))
-      const link = document.createElement('a')
-      link.href = url
-      link.download = `${currentPattern.name.replace(/[\\/:*?"<>|]/g, '_') || 'pattern'}.mid`
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      setTimeout(() => URL.revokeObjectURL(url), 1000)
-      setMidiStatus(`Exported ${currentPattern.name}.mid`)
+      const filename = downloadMidi(currentPattern, getState().bpm)
+      setMidiStatus(`Exported ${filename}`)
     } catch (error) {
       setMidiStatus(error instanceof Error ? error.message : 'Не удалось экспортировать MIDI.')
     }
@@ -965,29 +962,14 @@ export default function PianoRoll() {
         ))}
         <label style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 3 }}>
           <span style={{ fontSize: fontSize.xs, color: theme.textDim }}>Sound</span>
-          <select
+          <SoundSelect
             value={pianoPreset}
-            onChange={(e) => {
-              getState().setState({ pianoPreset: e.target.value })
-              playNote(e.target.value, 60, 0.5, 0.9)
-              e.currentTarget.blur()
-              gridRef.current?.focus({ preventScroll: true })
+            onFocusReturn={() => gridRef.current?.focus({ preventScroll: true })}
+            onChange={(preset) => {
+              setPatternSound(getState(), preset)
+              playNote(preset, 60, 0.5, 0.9)
             }}
-            style={{
-              background: theme.surface,
-              color: theme.text,
-              border: `1px solid ${theme.panelBorder}`,
-              borderRadius: '3px',
-              fontSize: fontSize.xs,
-              padding: '1px 4px',
-              outline: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            {PRESET_OPTIONS.map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
+          />
         </label>
       </div>
 

@@ -6,6 +6,9 @@ A browser-based digital audio workstation (DAW) built with React, Vite, and [Lin
 
 - **Channel Rack** — 16-step sequencer with per-channel volume, pan, and mute
 - **Piano Roll** — grid-based MIDI note editor
+- **MIDI files** — use **File → Import MIDI…** to add MIDI tracks as patterns and open Piano Roll; **File → Export MIDI…** downloads the selected pattern, including note lengths and velocities.
+- **Instrument library** — built-in synths plus 256 sampled General MIDI sounds from the FluidR3 and MusyngKite banks, available in Piano Roll's Sound picker and Channel Rack. Instruments load on demand and are cached in the browser; their first download needs an internet connection. Each pattern remembers its own instrument.
+- **Instrument windows** — separate **FluidR3 VST** and **MusyngKite VST** windows, each with 128 sounds, search, preview, and previous/next buttons. Open them with **FLUIDR3** / **MUSYNGKITE** in the top toolbar or the bank buttons beside a sound picker; use **↑/↓** to change instruments and **Enter** to preview. Each window can target a different rack channel or the current pattern. Rate each sound with 1–5 stars; click its current rating again to clear it. Ratings are saved in this browser across projects and reloads.
 - **Playlist** — arrangement view for patterning clips across tracks, with drag-and-drop audio clips that snap to and move between tracks
 - **Mixer** — Ableton-style channel strips with volume, pan, sends A/B, solo, mute, live metering, two return tracks (reverb and delay), and a master strip
 - **Draggable Windows** — all panels are freely draggable and resizable
@@ -20,6 +23,7 @@ A browser-based digital audio workstation (DAW) built with React, Vite, and [Lin
 | [React 18](https://react.dev/) | UI framework |
 | [Vite 5](https://vitejs.dev/) | Build tool & dev server |
 | [Linaria](https://linaria.dev/) | Zero-runtime CSS-in-JS |
+| [smplr](https://github.com/danigb/smplr) | Sampled instruments via Web Audio, using the [midi-js-soundfonts](https://github.com/gleitz/midi-js-soundfonts) banks |
 | [Zustand](https://github.com/pmndrs/zustand)-like | Custom lightweight store pattern |
 
 ## Getting Started
@@ -29,7 +33,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+Open [http://localhost:3001](http://localhost:3001) in your browser.
 
 ## Scripts
 

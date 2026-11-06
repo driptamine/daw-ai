@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useStore } from '../store/useStore'
 import type { Pattern, StoreState } from '../store/types'
 import { getPatternSteps, parseNoteKey } from '../audio/patternNotes'
-import { audioStats, getContext, playAudioBuffer, playChannel, playNote, resumeAudio, stopAllAudio, syncMixer } from '../audio/engine'
+import { audioStats, getContext, playAudioBuffer, playChannel, playNote, preparePlaybackSounds, resumeAudio, stopAllAudio, syncMixer } from '../audio/engine'
 import { getAudioAsset } from '../audio/assets'
 
 const BAR_STEPS = 16
@@ -45,19 +45,24 @@ function playPatternNotes(
   col: number,
   when: number,
   channelId?: number,
+  fromOffset = 0,
 ): void {
+  const secondsPerStep = 60 / state.bpm / 4
   pattern?.notes.forEach((key) => {
     const [noteIndex, noteCol] = parseNoteKey(key)
-    if (noteCol !== col || noteIndex < -36 || noteIndex > 91) return
+    if (noteIndex < -36 || noteIndex > 91 || noteCol + 1 <= col + fromOffset || noteCol >= col + 1) return
     const events = pattern.noteEvents?.[key]
     if (!events) {
-      playNote(state.pianoPreset, noteIndex + 36, 0.5, 0.9, when, channelId)
+      const offset = noteCol - col
+      if (offset < fromOffset || offset >= 1) return
+      playNote(pattern.soundPreset ?? state.pianoPreset, noteIndex + 36, 0.5, 0.9, when + offset * secondsPerStep, channelId)
       return
     }
-    const secondsPerStep = 60 / state.bpm / 4
     for (const event of events) {
-      playNote(state.pianoPreset, noteIndex + 36, event.durationSteps * secondsPerStep,
-        event.velocity, when + event.offsetSteps * secondsPerStep, channelId)
+      const offset = noteCol + event.offsetSteps - col
+      if (offset < fromOffset || offset >= 1) continue
+      playNote(pattern.soundPreset ?? state.pianoPreset, noteIndex + 36, event.durationSteps * secondsPerStep,
+        event.velocity, when + offset * secondsPerStep, channelId)
     }
   })
 }
@@ -69,16 +74,16 @@ function isChannelAudible(state: StoreState, trackIndex: number): boolean {
   return !state.channels.some((ch) => ch.solo) || channel.solo
 }
 
-function playAudioClipsAtStep(state: StoreState, step: number, when: number): void {
+function playAudioClipsAtStep(state: StoreState, step: number, when: number, fromOffset = 0): void {
   if (state.patternMode) return
 
   state.audioClips.forEach((clip) => {
-    const startStep = Math.round(clip.startBar * BAR_STEPS)
-    if (startStep !== step) return
+    const offset = clip.startBar * BAR_STEPS - step
+    if (offset < fromOffset || offset >= 1) return
     const track = clip.track ?? 0
     if (!isChannelAudible(state, track)) return
     const asset = getAudioAsset(clip.assetId)
-    if (asset) playAudioBuffer(asset.buffer, when, 0, 0.9, state.channels[track]?.id)
+    if (asset) playAudioBuffer(asset.buffer, when + offset * 60 / state.bpm / 4, 0, 0.9, state.channels[track]?.id)
   })
 }
 
@@ -87,7 +92,7 @@ function playActiveAudioClips(state: StoreState, startStep: number, when: number
 
   const secondsPerStep = 60 / state.bpm / 4
   state.audioClips.forEach((clip) => {
-    const clipStart = Math.round(clip.startBar * BAR_STEPS)
+    const clipStart = clip.startBar * BAR_STEPS
     if (clipStart >= startStep) return
     const track = clip.track ?? 0
     if (!isChannelAudible(state, track)) return
@@ -102,6 +107,8 @@ function playActiveAudioClips(state: StoreState, startStep: number, when: number
 export function useTransport(): void {
   const { getState, subscribe } = useStore()
   const playingRef = useRef(false)
+  const loadVersion = useRef(0)
+  const soundRef = useRef('')
   const stepRef = useRef(0)
   const startRef = useRef(0)
   const modeRef = useRef(getState().patternMode)
@@ -125,9 +132,10 @@ export function useTransport(): void {
       }
     }
 
-    const playStep = (state: StoreState, step: number, when: number) => {
+    const playStep = (state: StoreState, step: number, when: number, fromOffset = 0) => {
       const channelStep = step % BAR_STEPS
       state.channels.forEach((ch) => {
+        if (fromOffset > 0) return
         if (ch.mute || !ch.steps[channelStep]) return
         if (state.channels.some((c) => c.solo) && !ch.solo) return
         playChannel(ch.preset || 'synth', ((ch.vol ?? 100) / 100) * 0.85, when, ch.id)
@@ -135,19 +143,19 @@ export function useTransport(): void {
 
       if (state.patternMode) {
         const pattern = getPattern(state, state.currentPattern)
-        playPatternNotes(state, pattern, step % getPatternSteps(pattern), when)
+        playPatternNotes(state, pattern, step % getPatternSteps(pattern), when, undefined, fromOffset)
         return
       }
 
-      playAudioClipsAtStep(state, step, when)
+      playAudioClipsAtStep(state, step, when, fromOffset)
 
       const clips = state.playlistClips || []
       clips.forEach((clip) => {
         if (!isChannelAudible(state, clip.track)) return
         const col = step - clip.startBar * BAR_STEPS
-        if (col < 0 || col >= clip.lengthBars * BAR_STEPS) return
+        if (col + 1 <= 0 || col >= clip.lengthBars * BAR_STEPS) return
         const channelId = state.channels[clip.track]?.id
-        playPatternNotes(state, getPattern(state, clip.patternId), col, when, channelId)
+        playPatternNotes(state, getPattern(state, clip.patternId), col, when, channelId, fromOffset)
       })
     }
 
@@ -195,21 +203,49 @@ export function useTransport(): void {
       return start >= region.start && start < region.end ? start : region.start
     }
 
-    const startPlayback = (state: StoreState) => {
+    const soundSignature = (state: StoreState) => JSON.stringify([
+      state.pianoPreset,
+      state.patterns.map((pattern) => [pattern.id, pattern.soundPreset]),
+      state.channels.map((channel) => [channel.id, channel.preset]),
+    ])
+
+    const startPlayback = (state: StoreState, resumeStep?: number) => {
       resumeAudio()
-      const ctx = getContext()
+      clearTimers()
+      stopAllAudio()
+      const version = ++loadVersion.current
       playingRef.current = true
       startRef.current = state.playStart ?? 0
       modeRef.current = state.patternMode
-      stepRef.current = startRegionStep(state)
-      nextTimeRef.current = ctx.currentTime + 0.06
+      soundRef.current = soundSignature(state)
       queueRef.current = []
-      playActiveAudioClips(state, stepRef.current, nextTimeRef.current)
-      scheduler()
-      draw()
+      expectedRef.current = 0
+      void preparePlaybackSounds(state).then(() => {
+        const current = getState()
+        if (version !== loadVersion.current || !current.isPlaying) return
+        const ctx = getContext()
+        const region = getLoopRegion(current)
+        const start = resumeStep !== undefined && resumeStep >= region.start && resumeStep < region.end ? resumeStep : startRegionStep(current)
+        const when = ctx.currentTime + 0.06
+        const secondsPerStep = 60 / current.bpm / 4
+        const nextStep = Math.ceil(start)
+        playActiveAudioClips(current, start, when)
+        if (nextStep > start) {
+          const offset = start - Math.floor(start)
+          playStep(current, Math.floor(start), when - offset * secondsPerStep, offset)
+          queueRef.current.push({ step: start, time: when })
+        }
+        stepRef.current = nextStep >= region.end ? region.start : nextStep
+        nextTimeRef.current = when + (nextStep - start) * secondsPerStep
+        scheduler()
+        draw()
+      }).catch(() => {
+        if (version === loadVersion.current && getState().isPlaying) getState().setState({ isPlaying: false })
+      })
     }
 
     const stopPlayback = () => {
+      loadVersion.current += 1
       playingRef.current = false
       clearTimers()
       stopAllAudio()
@@ -234,14 +270,11 @@ export function useTransport(): void {
         return
       }
       if (state.isPlaying && (playStart !== startRef.current || state.patternMode !== modeRef.current)) {
-        const ctx = getContext()
-        startRef.current = playStart
-        modeRef.current = state.patternMode
-        stepRef.current = startRegionStep(state)
-        nextTimeRef.current = ctx.currentTime + 0.06
-        queueRef.current = []
-        stopAllAudio()
-        playActiveAudioClips(state, stepRef.current, nextTimeRef.current)
+        startPlayback(state)
+        return
+      }
+      if (state.isPlaying && soundSignature(state) !== soundRef.current) {
+        startPlayback(state, state.currentStep >= 0 ? state.currentStep : undefined)
         return
       }
       startRef.current = playStart
@@ -249,6 +282,7 @@ export function useTransport(): void {
     })
 
     return () => {
+      loadVersion.current += 1
       unsubscribe()
       clearTimers()
       stopAllAudio()

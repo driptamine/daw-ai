@@ -4,6 +4,8 @@ import TopBar from './components/TopBar/TopBar'
 import ChannelRack from './components/ChannelRack/ChannelRack'
 import PianoRoll from './components/PianoRoll/PianoRoll'
 import Mixer from './components/Mixer/Mixer'
+import SoundBrowser from './components/SoundBrowser/SoundBrowser'
+import { SOUND_WINDOWS } from './store/instruments'
 import BrowserSidebar from './components/BrowserSidebar/BrowserSidebar'
 import Playlist from './components/Playlist/Playlist'
 import DraggableWindow from './components/DraggableWindow/DraggableWindow'
@@ -20,6 +22,7 @@ const AppContainer = styled.div`
 `
 
 const MainArea = styled.div`
+  isolation: isolate;
   display: flex;
   flex: 1;
   min-height: 0;
@@ -123,6 +126,11 @@ function App() {
               <Mixer />
             </DraggableWindow>
           )}
+          {SOUND_WINDOWS.map((window) => getState().windowVisibility[window.id] && (
+            <DraggableWindow key={window.id} id={window.id} title={window.title}>
+              <SoundBrowser bank={window.bank} />
+            </DraggableWindow>
+          ))}
         </ContentArea>
       </MainArea>
     </AppContainer>

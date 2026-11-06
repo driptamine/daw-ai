@@ -15,6 +15,9 @@ const MAX_ZOOM = 8
 const DEFAULT_ROW_HEIGHT = 40
 const LABEL_WIDTH = 88
 const HEADER_HEIGHT = 28
+const SNAP_OPTIONS = ['1/1', '1/2', '1/4', '1/8', '1/16', '1/32', 'off'] as const
+type SnapValue = typeof SNAP_OPTIONS[number]
+
 const AUDIO_CLIP_COLOR = '#2dd4bf'
 const AUDIO_EXTENSIONS = ['.mp3', '.wav', '.ogg', '.m4a', '.aac', '.flac']
 
@@ -385,7 +388,18 @@ export default function Playlist() {
   const [isDragOver, setIsDragOver] = useState(false)
   const [isImporting, setIsImporting] = useState(false)
   const [copiedLength, setCopiedLength] = useState<number | null>(null)
-  const [snapEnabled, setSnapEnabled] = useState(true)
+  const [snapValue, setSnapValue] = useState<SnapValue>(() => {
+    try {
+      const saved = localStorage.getItem('daw-ai:playlist-snap') as SnapValue
+      return SNAP_OPTIONS.includes(saved) ? saved : '1/1'
+    } catch { return '1/1' }
+  })
+  const snapUnit = snapValue === 'off' ? 0 : 1 / Number(snapValue.slice(2))
+  const snapBars = useCallback((bars: number) => snapUnit ? Math.round(bars / snapUnit) * snapUnit : bars, [snapUnit])
+
+  useEffect(() => {
+    try { localStorage.setItem('daw-ai:playlist-snap', snapValue) } catch { /* Storage is optional. */ }
+  }, [snapValue])
   const [tool, setTool] = useState<'draw' | 'select'>('draw')
   const [selectedClips, setSelectedClips] = useState<Set<string>>(() => new Set())
   const [selectionBox, setSelectionBox] = useState<SelectionBox | null>(null)
@@ -560,7 +574,7 @@ export default function Playlist() {
     const rect = timelineRef.current?.getBoundingClientRect()
     const tracksRect = tracksRef.current?.getBoundingClientRect()
     const dropBar = rect
-      ? Math.max(0, Math.min(totalBars - 1, Math.floor((e.clientX - rect.left) / barWidth)))
+      ? Math.max(0, Math.min(totalBars - 1, snapBars((e.clientX - rect.left) / barWidth)))
       : 0
     const dropTrack = tracksRect
       ? Math.max(
@@ -618,7 +632,7 @@ export default function Playlist() {
       audioClips: [...latest.audioClips, ...newClips],
       playlistLength: Math.max(latest.playlistLength, Math.ceil(endBar)),
     })
-  }, [getState, barWidth, rowHeight, totalBars])
+  }, [getState, barWidth, rowHeight, totalBars, snapBars])
 
   const handleClipDoubleClick = useCallback((clip: Clip) => {
     const s = getState()
@@ -678,7 +692,7 @@ export default function Playlist() {
     const applyMove = () => {
       const scroller = scrollRef.current
       const rawBars = (pointerX - startX + (scroller?.scrollLeft ?? 0) - startScrollX) / barWidth
-      const bars = Math.max(-minBar, snapEnabled ? Math.round(rawBars) : rawBars)
+      const bars = Math.max(-minBar, snapBars(rawBars))
       const rows = Math.max(-minTrack, Math.min(state.channels.length - 1 - maxTrack,
         Math.round((pointerY - startY + (scroller?.scrollTop ?? 0) - startScrollY) / rowHeight)))
       if (bars === lastBars && rows === lastRows) return
@@ -712,7 +726,7 @@ export default function Playlist() {
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
     return true
-  }, [tool, selectedClips, getState, barWidth, rowHeight, snapEnabled])
+  }, [tool, selectedClips, getState, barWidth, rowHeight, snapBars])
 
   const handleSelectionBox = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
     if (tool !== 'select' || e.button !== 0) return
@@ -784,7 +798,7 @@ export default function Playlist() {
     const applyMove = (clientX: number, clientY: number) => {
       const scrollOffset = (scrollRef.current?.scrollLeft ?? 0) - startScroll
       const rawDeltaBars = (clientX - startX + scrollOffset) / barWidth
-      const deltaBars = snapEnabled ? Math.round(rawDeltaBars) : rawDeltaBars
+      const deltaBars = snapBars(rawDeltaBars)
       const deltaRows = Math.round((clientY - startY) / rowHeight)
       if (Math.abs(deltaBars) < 1e-6 && deltaRows === 0) return
       moved = true
@@ -820,14 +834,14 @@ export default function Playlist() {
         setCopiedLength(clip.lengthBars)
         if (clip.patternId != null) {
           const cur = getState()
-          cur.setState({ currentPattern: clip.patternId, playStart: Math.round(clip.startBar * 16) })
+          cur.setState({ currentPattern: clip.patternId, playStart: clip.startBar * 16 })
         }
       }
     }
 
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
-  }, [getState, snapEnabled, barWidth, rowHeight, handleSelectedClipMouseDown])
+  }, [getState, snapBars, barWidth, rowHeight, handleSelectedClipMouseDown])
 
   const handleAudioClipMouseDown = useCallback(
     (clip: AudioClip, e: ReactMouseEvent<HTMLDivElement>) => {
@@ -850,7 +864,7 @@ export default function Playlist() {
       const applyMove = (clientX: number, clientY: number) => {
         const scrollOffset = (scrollRef.current?.scrollLeft ?? 0) - startScroll
         const rawDeltaBars = (clientX - startX + scrollOffset) / barWidth
-        const deltaBars = snapEnabled ? Math.round(rawDeltaBars) : rawDeltaBars
+        const deltaBars = snapBars(rawDeltaBars)
         const deltaRows = Math.round((clientY - startY) / rowHeight)
         if (!moved && Math.abs(deltaBars) < 1e-6 && deltaRows === 0) return
         moved = true
@@ -886,7 +900,7 @@ export default function Playlist() {
       document.addEventListener('mousemove', onMove)
       document.addEventListener('mouseup', onUp)
     },
-    [getState, snapEnabled, barWidth, rowHeight, handleSelectedClipMouseDown],
+    [getState, snapBars, barWidth, rowHeight, handleSelectedClipMouseDown],
   )
 
   const handleTimelineScroll = useCallback((e: ReactUIEvent<HTMLDivElement>) => {
@@ -923,14 +937,14 @@ export default function Playlist() {
     const startX = e.clientX
     const origStart = clip.startBar
     const origLength = clip.lengthBars
-    const minLen = snapEnabled ? 1 : 0.25
+    const minLen = snapUnit || 1 / 64
     const startScroll = scrollRef.current?.scrollLeft ?? 0
     let pointerX = e.clientX
 
     const applyResize = (clientX: number) => {
       const scrollOffset = (scrollRef.current?.scrollLeft ?? 0) - startScroll
       const rawDeltaBars = (clientX - startX + scrollOffset) / barWidth
-      const deltaBars = snapEnabled ? Math.round(rawDeltaBars) : rawDeltaBars
+      const deltaBars = snapBars(rawDeltaBars)
       let startBar = origStart
       let lengthBars = origLength
       if (edge === 'right') {
@@ -969,7 +983,7 @@ export default function Playlist() {
 
     document.addEventListener('mousemove', onMove)
     document.addEventListener('mouseup', onUp)
-  }, [getState, snapEnabled, barWidth, tool, handleSelectedClipMouseDown])
+  }, [getState, snapBars, snapUnit, barWidth, tool, handleSelectedClipMouseDown])
 
   const handleAddTrack = useCallback(() => {
     const s = getState()
@@ -990,19 +1004,21 @@ export default function Playlist() {
     s.setState({ channels: [...s.channels, newChannel] })
   }, [getState])
 
-  const seekFromClientX = useCallback((clientX: number) => {
+  const seekFromClientX = useCallback((clientX: number, free = false) => {
     const el = timelineRef.current
     if (!el) return
     const rect = el.getBoundingClientRect()
     const x = Math.max(0, Math.min(rect.width, clientX - rect.left))
-    const step = Math.round((x / barWidth) * 16)
+    const bar = x / barWidth
+    const step = (!free ? snapBars(bar) : bar) * 16
     getState().setState({ playStart: step, patternMode: false })
-  }, [getState, barWidth])
+  }, [getState, barWidth, snapBars])
 
   const handleTimelineDown = useCallback((e: ReactMouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
     e.preventDefault()
-    seekFromClientX(e.clientX)
-    const onMove = (me: MouseEvent) => seekFromClientX(me.clientX)
+    seekFromClientX(e.clientX, e.altKey)
+    const onMove = (me: MouseEvent) => seekFromClientX(me.clientX, me.altKey)
     const onUp = () => {
       document.removeEventListener('mousemove', onMove)
       document.removeEventListener('mouseup', onUp)
@@ -1086,13 +1102,24 @@ export default function Playlist() {
         >
           Pattern
         </ModeBtn>
-        <ModeBtn
-          $active={snapEnabled}
-          onClick={() => setSnapEnabled((v) => !v)}
-          title={snapEnabled ? 'Привязка к тактам включена' : 'Свободное перемещение без привязки'}
-        >
-          Snap: {snapEnabled ? 'On' : 'Off'}
-        </ModeBtn>
+        <label style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: fontSize.xs, color: theme.textDim }}>
+          Snap
+          <select
+            aria-label="Playlist snap"
+            value={snapValue}
+            title="Привязка клипов и playhead. Alt — свободное перемещение playhead"
+            onChange={(event) => {
+              const value = event.target.value as SnapValue
+              if (!SNAP_OPTIONS.includes(value)) return
+              setSnapValue(value)
+              event.currentTarget.blur()
+              event.currentTarget.closest<HTMLElement>('[aria-label="Playlist"]')?.focus({ preventScroll: true })
+            }}
+            style={{ background: theme.surface, color: theme.text, border: `1px solid ${snapValue === 'off' ? theme.panelBorder : theme.accent}`, borderRadius: 3, padding: '2px 4px', fontSize: fontSize.xs, cursor: 'pointer' }}
+          >
+            {SNAP_OPTIONS.map((value) => <option key={value} value={value}>{value === 'off' ? 'Off' : value}</option>)}
+          </select>
+        </label>
         <AddTrackBtn onClick={handleAddTrack}>+ Track</AddTrackBtn>
         <ModeBtn
           $active={false}
@@ -1203,10 +1230,14 @@ export default function Playlist() {
                   {Array.from({ length: totalBars }, (_, bar) => (
                     <BarCell
                       key={bar}
-                      onClick={() => { if (tool === 'draw') handlePlaceClip(trackIdx, bar) }}
+                      onClick={(event) => {
+                        if (tool !== 'draw') return
+                        const rect = timelineRef.current?.getBoundingClientRect()
+                        if (rect) handlePlaceClip(trackIdx, Math.max(0, snapBars((event.clientX - rect.left) / barWidth)))
+                      }}
                       style={{ cursor: tool === 'select' ? 'crosshair' : undefined }}
                     >
-                      {(bar + 1) % 4 === 0 && (
+                      {bar % 4 === 0 && (
                         <BeatLine />
                       )}
                     </BarCell>

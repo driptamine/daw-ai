@@ -1,3 +1,5 @@
+import { SAMPLED_PRESETS } from './soundfonts'
+
 export type PresetFn = (
   ctx: AudioContext,
   out: AudioNode,
@@ -300,6 +302,14 @@ export const SOUND_PRESETS: Record<string, SoundPreset> = {
   fx: { label: 'FX Riser', fn: fx, previewMidi: 48 },
 }
 
-export const PRESET_OPTIONS: { id: string; label: string }[] = Object.entries(SOUND_PRESETS).map(
+const BUILTIN_OPTIONS = Object.entries(SOUND_PRESETS).map(
   ([id, preset]) => ({ id, label: preset.label }),
 )
+
+export const PRESET_GROUPS = [
+  { label: 'Built-in synths & drums', options: BUILTIN_OPTIONS },
+  { label: 'FluidR3 · General MIDI', options: SAMPLED_PRESETS.filter((preset) => preset.bank === 'FluidR3_GM') },
+  { label: 'MusyngKite · General MIDI', options: SAMPLED_PRESETS.filter((preset) => preset.bank === 'MusyngKite') },
+]
+
+export const PRESET_OPTIONS: { id: string; label: string }[] = PRESET_GROUPS.flatMap((group) => group.options)

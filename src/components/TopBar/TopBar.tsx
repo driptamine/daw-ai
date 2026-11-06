@@ -6,6 +6,8 @@ import { exportProject, importProject } from '../../store/persist'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { ChangeEvent as ReactChangeEvent } from 'react'
 import type { StoreState } from '../../store/types'
+import FileMenu from './FileMenu'
+import { SOUND_WINDOWS } from '../../store/instruments'
 
 const Bar = styled.div`
   display: flex;
@@ -172,6 +174,7 @@ const windows = [
   { id: 'pianoRoll', label: 'PIANO' },
   { id: 'playlist', label: 'PLAYLIST' },
   { id: 'mixer', label: 'MIX' },
+  ...SOUND_WINDOWS,
 ]
 
 function isTopWindow(state: StoreState, id: string) {
@@ -359,7 +362,7 @@ export default function TopBar() {
   return (
     <Bar>
       <MenuRow>
-        <MenuItem>File</MenuItem>
+        <FileMenu />
         <MenuItem>Edit</MenuItem>
         <MenuItem>Add</MenuItem>
         <MenuItem>Patterns</MenuItem>
@@ -428,7 +431,8 @@ export default function TopBar() {
             key={w.id}
             $active={windowVisibility[w.id]}
             onClick={() => handleWindowToggle(w.id)}
-            style={{ fontSize: '9px', padding: '2px 5px' }}
+            title={'title' in w ? w.title : w.label}
+            style={{ fontSize: '9px', padding: '2px 5px', flexShrink: 0, whiteSpace: 'nowrap' }}
           >
             {w.label}
           </Button>

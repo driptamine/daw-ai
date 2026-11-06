@@ -1,4 +1,4 @@
-import { useRef, useEffect } from 'react'
+import { useRef, useLayoutEffect, useCallback } from 'react'
 import type { MouseEvent as ReactMouseEvent, ReactNode } from 'react'
 import { styled } from '@linaria/react'
 import { theme, fontSize } from '../../styles/theme'
@@ -16,13 +16,6 @@ type ResizeMode = 'corner' | 'bottom' | 'top'
 interface Point {
   x: number
   y: number
-}
-
-interface RestoreRect {
-  x: number
-  y: number
-  width: number
-  height: number
 }
 
 const WinBtn = styled.button`
@@ -55,31 +48,56 @@ export default function DraggableWindow({ id, title, actions, children }: Dragga
   const { getState, setState } = useStore()
   const elRef = useRef<HTMLDivElement | null>(null)
   const posRef = useRef<Point | null>(null)
-  const maximizedRef = useRef(false)
-  const restoreRef = useRef<RestoreRect | null>(null)
   const layout = getState().windowLayout[id]
 
-  useEffect(() => {
+  const maximized = layout?.maximized ?? false
+
+  const syncMaximizedSize = useCallback(() => {
     const el = elRef.current
-    if (!el || !layout) return
+    const parent = el?.parentElement
+    const state = getState()
+    const win = state.windowLayout[id]
+    if (!el || !parent || !win?.maximized || !parent.clientWidth || !parent.clientHeight) return
+    const width = parent.clientWidth
+    const height = parent.clientHeight
+    if (win.x === 0 && win.y === 0 && win.width === width && win.height === height && win.restoreRect) return
+    const restoreRect = win.restoreRect ?? { x: win.x, y: win.y, width: win.width, height: win.height }
+    el.style.width = `${width}px`
+    el.style.height = `${height}px`
+    el.style.transform = 'translate(0px, 0px)'
+    posRef.current = { x: 0, y: 0 }
+    setState({ windowLayout: { ...state.windowLayout, [id]: { ...win, x: 0, y: 0, width, height, restoreRect } } })
+  }, [getState, id, setState])
+
+  useLayoutEffect(() => {
+    const parent = elRef.current?.parentElement
+    if (!parent) return
+    syncMaximizedSize()
+    const observer = new ResizeObserver(syncMaximizedSize)
+    observer.observe(parent)
+    return () => observer.disconnect()
+  }, [syncMaximizedSize])
+
+  useLayoutEffect(() => {
+    const el = elRef.current
+    const win = getState().windowLayout[id]
+    if (!el || !win) return
+    const parent = el.parentElement
+    const width = win.maximized && parent ? parent.clientWidth : win.width
+    const height = win.maximized && parent ? parent.clientHeight : win.height
+    const x = win.maximized ? 0 : win.x
+    const y = win.maximized ? 0 : win.y
     el.style.position = 'absolute'
     el.style.left = '0px'
     el.style.top = '0px'
-    el.style.width = layout.width + 'px'
-    el.style.height = layout.height + 'px'
-    el.style.transform = `translate(${layout.x}px, ${layout.y}px)`
-    el.style.zIndex = String(layout.zIndex)
-    el.style.cursor = 'grab'
+    el.style.width = `${width}px`
+    el.style.height = `${height}px`
+    el.style.transform = `translate(${x}px, ${y}px)`
+    el.style.zIndex = String(win.zIndex)
+    el.style.cursor = win.maximized ? 'default' : 'grab'
     el.style.overflow = 'hidden'
-    posRef.current = { x: layout.x, y: layout.y }
-  }, [layout])
-
-  const zIndex = layout ? layout.zIndex : undefined
-  useEffect(() => {
-    if (elRef.current && zIndex !== undefined) {
-      elRef.current.style.zIndex = String(zIndex)
-    }
-  }, [zIndex])
+    posRef.current = { x, y }
+  }, [layout, getState, id])
 
   const startResize = (e: ReactMouseEvent<HTMLDivElement>, mode: ResizeMode) => {
     e.preventDefault()
@@ -88,7 +106,7 @@ export default function DraggableWindow({ id, title, actions, children }: Dragga
     if (!el) return
     const s = getState()
     const win = s.windowLayout[id]
-    if (!win) return
+    if (!win || win.maximized) return
 
     const startX = e.clientX
     const startY = e.clientY
@@ -158,22 +176,20 @@ export default function DraggableWindow({ id, title, actions, children }: Dragga
     const z = (s.maxZIndex || 10) + 1
     const layouts = { ...s.windowLayout }
 
-    if (!maximizedRef.current) {
-      restoreRef.current = { x: win.x, y: win.y, width: win.width, height: win.height }
-      layouts[id] = { ...win, x: 0, y: 0, width: pw, height: ph, zIndex: z }
-      maximizedRef.current = true
+    if (!win.maximized) {
+      const restoreRect = { x: win.x, y: win.y, width: win.width, height: win.height }
+      layouts[id] = { ...win, x: 0, y: 0, width: pw, height: ph, zIndex: z, maximized: true, restoreRect }
       posRef.current = { x: 0, y: 0 }
       el.style.width = `${pw}px`
       el.style.height = `${ph}px`
       el.style.transform = 'translate(0px, 0px)'
     } else {
-      const r = restoreRef.current || { x: win.x, y: win.y, width: win.width, height: win.height }
-      layouts[id] = { ...win, x: r.x, y: r.y, width: r.width, height: r.height, zIndex: z }
-      maximizedRef.current = false
-      posRef.current = { x: r.x, y: r.y }
-      el.style.width = `${r.width}px`
-      el.style.height = `${r.height}px`
-      el.style.transform = `translate(${r.x}px, ${r.y}px)`
+      const rect = win.restoreRect ?? { x: 6, y: 6, width: Math.min(986, pw), height: Math.min(540, ph) }
+      layouts[id] = { ...win, ...rect, zIndex: z, maximized: false, restoreRect: undefined }
+      posRef.current = { x: rect.x, y: rect.y }
+      el.style.width = `${rect.width}px`
+      el.style.height = `${rect.height}px`
+      el.style.transform = `translate(${rect.x}px, ${rect.y}px)`
     }
     setState({ windowLayout: layouts, maxZIndex: z })
   }
@@ -183,6 +199,8 @@ export default function DraggableWindow({ id, title, actions, children }: Dragga
   return (
     <div
       ref={elRef}
+      data-window-id={id}
+      data-maximized={maximized}
       style={{
         border: `2px solid ${theme.panelBorder}`,
         background: theme.panelBg,
@@ -218,7 +236,7 @@ export default function DraggableWindow({ id, title, actions, children }: Dragga
 
           const s = getState()
           const win = s.windowLayout[id]
-          if (!win) return
+          if (!win || win.maximized) return
 
           const parent = el.parentElement
           const pw = parent?.clientWidth ?? 1200
@@ -272,26 +290,6 @@ export default function DraggableWindow({ id, title, actions, children }: Dragga
             </div>
           )}
           <WinBtn
-            title="Закрыть"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation()
-              closeWindow()
-            }}
-          >
-            ×
-          </WinBtn>
-          <WinBtn
-            title="Развернуть"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => {
-              e.stopPropagation()
-              toggleMaximize()
-            }}
-          >
-            □
-          </WinBtn>
-          <WinBtn
             title="Свернуть"
             onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => {
@@ -301,6 +299,26 @@ export default function DraggableWindow({ id, title, actions, children }: Dragga
           >
             –
           </WinBtn>
+          <WinBtn
+            title={maximized ? 'Восстановить' : 'Развернуть'}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              toggleMaximize()
+            }}
+          >
+            {maximized ? '▣' : '□'}
+          </WinBtn>
+          <WinBtn
+            title="Закрыть"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation()
+              closeWindow()
+            }}
+          >
+            ×
+          </WinBtn>
         </div>
       </div>
 
@@ -308,6 +326,7 @@ export default function DraggableWindow({ id, title, actions, children }: Dragga
         {children}
       </div>
 
+      {!maximized && <>
       <div
         style={{
           position: 'absolute',
@@ -356,6 +375,7 @@ export default function DraggableWindow({ id, title, actions, children }: Dragga
           borderBottom: '2px solid ' + theme.textDim,
         }} />
       </div>
+      </>}
     </div>
   )
 }

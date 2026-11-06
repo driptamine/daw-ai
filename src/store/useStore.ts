@@ -46,10 +46,12 @@ const defaultStore: AppState = {
   returnTracks: defaultReturnTracks,
   maxZIndex: 10,
   windowLayout: {
-    playlist: { x: 6, y: 6, width: 986, height: 540, zIndex: 1 },
+    playlist: { x: 6, y: 6, width: 986, height: 540, zIndex: 1, maximized: true },
     channelRack: { x: 6, y: 282, width: 380, height: 266, zIndex: 3 },
     pianoRoll: { x: 392, y: 282, width: 600, height: 266, zIndex: 4 },
     mixer: { x: 6, y: 6, width: 986, height: 640, zIndex: 2 },
+    fluidR3Vst: { x: 16, y: 16, width: 350, height: 540, zIndex: 5 },
+    musyngKiteVst: { x: 380, y: 16, width: 350, height: 540, zIndex: 6 },
   },
   playlistClips: [
     { id: 1, track: 0, startBar: 0, lengthBars: 4, patternId: 1 },
@@ -62,7 +64,9 @@ const defaultStore: AppState = {
     channelRack: true,
     pianoRoll: true,
     playlist: true,
-    mixer: true,
+    mixer: false,
+    fluidR3Vst: false,
+    musyngKiteVst: false,
   },
   audioClips: [],
   currentStep: -1,
@@ -177,6 +181,7 @@ function snapshot(state: StoreState): HistorySnapshot {
     playlistClips: state.playlistClips,
     playlistLength: state.playlistLength,
     windowVisibility: state.windowVisibility,
+    soundBrowserTargets: state.soundBrowserTargets,
     audioClips: state.audioClips,
   }
 }

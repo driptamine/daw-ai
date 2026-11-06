@@ -2,7 +2,7 @@ import { styled } from '@linaria/react'
 import { theme, fontSize } from '../../styles/theme'
 import { useStore } from '../../store/useStore'
 import { playChannel } from '../../audio/engine'
-import { PRESET_OPTIONS } from '../../audio/presets'
+import SoundSelect from '../SoundSelect/SoundSelect'
 import { useEffect, useState, useCallback } from 'react'
 
 const Container = styled.div`
@@ -130,22 +130,6 @@ const ChanLabel = styled.span`
   text-align: right;
 `
 
-const PresetSelect = styled.select`
-  background: ${theme.surface};
-  color: ${theme.text};
-  border: 1px solid ${theme.panelBorder};
-  border-radius: 3px;
-  font-size: 8px;
-  width: 60px;
-  padding: 1px 2px;
-  outline: none;
-  cursor: pointer;
-
-  &:focus {
-    border-color: ${theme.accent};
-  }
-`
-
 export default function ChannelRack() {
   const { getState, subscribe } = useStore()
   const [, forceUpdate] = useState(0)
@@ -213,14 +197,7 @@ export default function ChannelRack() {
               ))}
             </Steps>
             <Controls>
-              <PresetSelect
-                value={ch.preset || 'synth'}
-                onChange={(e) => handlePresetChange(chIdx, e.target.value)}
-              >
-                {PRESET_OPTIONS.map((p) => (
-                  <option key={p.id} value={p.id}>{p.label}</option>
-                ))}
-              </PresetSelect>
+              <SoundSelect compact channelId={ch.id} value={ch.preset || 'synth'} onChange={(preset) => handlePresetChange(chIdx, preset)} />
               <ChanLabel>{ch.vol}</ChanLabel>
               <Level onClick={(e) => {
                 const rect = e.currentTarget.getBoundingClientRect()

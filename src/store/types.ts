@@ -1,3 +1,5 @@
+import type { SoundfontBank } from '../audio/soundfonts'
+
 export interface Channel {
   id: number
   name: string
@@ -22,6 +24,7 @@ export interface Pattern {
   id: number
   name: string
   notes: string[]
+  soundPreset?: string
   noteEvents?: Record<string, NoteEvent[]>
   lengthSteps?: number
   midiChannel?: number
@@ -65,9 +68,12 @@ export interface WindowLayout {
   width: number
   height: number
   zIndex: number
+  maximized?: boolean
+  restoreRect?: { x: number; y: number; width: number; height: number }
 }
 
 export interface AppState {
+  soundBrowserTargets?: Partial<Record<SoundfontBank, { kind: 'pattern' } | { kind: 'channel'; channelId: number }>>
   isPlaying: boolean
   playStart: number
   bpm: number

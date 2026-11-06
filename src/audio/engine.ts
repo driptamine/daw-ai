@@ -1,4 +1,7 @@
 import { SOUND_PRESETS, midiToFreq } from './presets'
+import { SAMPLED_PRESET_MAP } from './soundfonts'
+import { cancelSampledPreview, pinSampledInstruments, playSampledInstrument, prepareSampledInstrument, stopSampledInstruments } from './sampledInstruments'
+import type { AppState } from '../store/types'
 
 let ctx: AudioContext | null = null
 let master: GainNode | null = null
@@ -376,6 +379,7 @@ export function playAudioBuffer(
 }
 
 export function stopAllAudio(): void {
+  stopSampledInstruments()
   activeSources.forEach((source) => {
     try {
       source.stop()
@@ -396,11 +400,44 @@ export function playNote(
 ): void {
   const context = getContext()
   if (context.state === 'suspended') context.resume()
+  const out = channelId != null ? getChannelStrip(context, channelId).input : (master as GainNode)
+  if (when === undefined) cancelSampledPreview()
+  if (SAMPLED_PRESET_MAP.has(presetId)) {
+    playSampledInstrument(presetId, context, out, midi, duration, clamp01(velocity), when)
+    return
+  }
   const preset = SOUND_PRESETS[presetId] || SOUND_PRESETS.synth
   const freq = midiToFreq(midi)
   const time = when != null ? when : context.currentTime + 0.001
-  const out = channelId != null ? getChannelStrip(context, channelId).input : (master as GainNode)
   preset.fn(context, out, time, freq, duration, clamp01(velocity))
+}
+
+export async function prepareSound(presetId: string, channelId?: number): Promise<void> {
+  if (!SAMPLED_PRESET_MAP.has(presetId)) return
+  const context = getContext()
+  const out = channelId != null ? getChannelStrip(context, channelId).input : (master as GainNode)
+  await prepareSampledInstrument(presetId, context, out)
+}
+
+export async function preparePlaybackSounds(state: AppState): Promise<void> {
+  const requests = new Map<string, { preset: string; channelId?: number }>()
+  const add = (preset: string, channelId?: number) => requests.set(`${preset}:${channelId ?? 'master'}`, { preset, channelId })
+  const audible = (index: number) => !state.channels[index]?.mute && (!state.channels.some((channel) => channel.solo) || state.channels[index]?.solo)
+  state.channels.forEach((channel, index) => {
+    if (audible(index) && channel.steps.some(Boolean)) add(channel.preset, channel.id)
+  })
+  if (state.patternMode) {
+    const pattern = state.patterns.find((item) => item.id === state.currentPattern)
+    if (pattern?.notes.length) add(pattern.soundPreset ?? state.pianoPreset)
+  } else {
+    state.playlistClips.forEach((clip) => {
+      if (!audible(clip.track)) return
+      const pattern = state.patterns.find((item) => item.id === clip.patternId)
+      if (pattern?.notes.length) add(pattern.soundPreset ?? state.pianoPreset, state.channels[clip.track]?.id)
+    })
+  }
+  pinSampledInstruments([...requests.values()].map(({ preset }) => preset))
+  await Promise.all([...requests.values()].map(({ preset, channelId }) => prepareSound(preset, channelId)))
 }
 
 export function playChannel(

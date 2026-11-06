@@ -71,3 +71,17 @@ export function exportMidi(pattern: Pattern, bpm: number): Uint8Array {
   track.endOfTrackTicks = Math.round(getPatternSteps(pattern) * ticksPerStep)
   return midi.toArray()
 }
+
+export function downloadMidi(pattern: Pattern, bpm: number): string {
+  const bytes = exportMidi(pattern, bpm)
+  const url = URL.createObjectURL(new Blob([new Uint8Array(bytes).buffer], { type: 'audio/midi' }))
+  const filename = `${pattern.name.replace(/[\\/:*?"<>|]/g, '_') || 'pattern'}.mid`
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return filename
+}
